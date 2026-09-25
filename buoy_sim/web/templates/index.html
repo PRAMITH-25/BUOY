@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Solar-Powered Autonomous Lake Water Quality Monitoring Buoy — Digital Prototype</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <!-- Chart.js for scientific time-series visualization -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+  <!-- =======================================================================
+       1. PROJECT HEADER
+       ======================================================================= -->
+  <header class="top-header">
+    <div class="header-title-block">
+      <div class="header-title-row">
+        <span class="buoy-tag"><span class="pulse-dot"></span> VIRTUAL BUOY (ESP32-S3)</span>
+        <h1 class="project-title">Solar-Powered Autonomous Lake Water Quality Monitoring Buoy</h1>
+      </div>
+      <div class="project-subtitle">Interactive Digital Prototype Using Historical USGS Water-Quality Data</div>
+      <div class="header-meta-row">
+        <span class="source-label">Environmental Data Source: <strong>USGS Lake Erie Nearshore Sonde Dataset — June 2019</strong></span>
+        <span class="historical-alert-badge">HISTORICAL DATA — NOT LIVE MEASUREMENTS</span>
+      </div>
+    </div>
+
+    <div class="header-controls">
+      <div class="header-sim-stats">
+        <div class="sim-stat-item">
+          <span class="sim-stat-lbl">SIM CLOCK:</span>
+          <span id="hdr-sim-time" class="sim-stat-val font-mono">08:00:00</span>
+        </div>
+        <div class="sim-stat-item">
+          <span class="sim-stat-lbl">STATUS:</span>
+          <span class="sim-stat-val text-blue font-mono" id="hdr-sim-status">SIMULATION ACTIVE</span>
+        </div>
+      </div>
+      <button id="btn-play-pause" class="btn btn-primary" onclick="togglePlayPause()">❚❚ Pause</button>
+      <button id="btn-step" class="btn btn-secondary" onclick="stepSim(2.0)">▶| Step 2s</button>
+      <div class="speed-select-wrap">
+        <label for="speed-select">Speed:</label>
+        <select id="speed-select" onchange="setSpeed(this.value)">
+          <option value="1">1x</option>
+          <option value="5" selected>5x</option>
+          <option value="15">15x</option>
+          <option value="60">60x</option>
+        </select>
+      </div>
+    </div>
+  </header>
+
+  <!-- =======================================================================
+       MAIN DASHBOARD STRUCTURE
+       ======================================================================= -->
+  <main class="dashboard-container">
+
+    <!-- =====================================================================
+         2. INTERACTIVE WATER BODY / HEATMAP
+         ===================================================================== -->
+    <section class="section-card" id="section-water-body">
+      <div class="card-header-bar">
+        <div class="card-title-block">
+          <span class="card-section-num">Section 2</span>
+          <h2 class="card-title">Interactive Water Body &amp; USGS Spatial Heatmap</h2>
+          <span class="card-subtitle">Draggable virtual buoy samples continuous spatial water quality derived from actual USGS observations via KNN-IDW (K=3)</span>
+        </div>
+        <span class="card-status-badge badge-usgs">USGS HISTORICAL DATA</span>
+      </div>
+
+      <div class="card-body">
+        <div class="lake-map-layout">
+          <!-- Left Column: Map Canvas & Controls -->
+          <div class="map-view-column">
+            <div class="canvas-wrapper">
+              <canvas id="lakeMapCanvas" width="920" height="420"></canvas>
+              <div class="canvas-hint">
+                <span>📍 <strong>Drag Buoy Marker</strong> with mouse or touch to sample spatial coordinates</span>
+                <span class="font-mono" id="map-quick-coords">X: 500m | Y: 300m</span>
+              </div>
+            </div>
+
+            <!-- Heatmap Controls & Legend -->
+            <div class="heatmap-controls-row">
+              <div class="param-btn-group">
+                <span class="param-btn-label">Parameter:</span>
+                <button class="btn-param active" id="btn-param-turbidity" onclick="setHeatmapParameter('turbidity_ntu')">Turbidity (NTU)</button>
+                <button class="btn-param" id="btn-param-ec" onclick="setHeatmapParameter('ec_us_cm')">EC (µS/cm)</button>
+                <button class="btn-param" id="btn-param-ph" onclick="setHeatmapParameter('ph')">pH</button>
+                <button class="btn-param" id="btn-param-temp" onclick="setHeatmapParameter('water_temp_c')">Temperature (°C)</button>
+              </div>
+
+              <div class="heatmap-legend-strip">
+                <span class="legend-title" id="legend-param-title">Turbidity:</span>
+                <div class="legend-scale-wrap">
+                  <span class="legend-val" id="legend-min-val">0.00 NTU</span>
+                  <div class="legend-gradient-bar" id="legend-gradient-bar"></div>
+                  <span class="legend-val" id="legend-max-val">29.90 NTU</span>
+                </div>
+                <span class="legend-method-tag">KNN-IDW K=3</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right Column: Source Data Inspection (Section 7 in prompt) -->
+          <div class="source-inspection-panel">
+            <div class="panel-header-sm">
+              <span class="panel-title-sm">Source Observations</span>
+              <span class="legend-method-tag">K=3 Nearest</span>
+            </div>
+            <div style="font-size: 0.73rem; color: var(--text-muted); line-height: 1.35;">
+              Actual USGS observations currently contributing to buoy value:
+            </div>
+
+            <!-- USGS Point 1 -->
+            <div class="source-point-card" id="source-point-1">
+              <div class="source-point-head">
+                <span class="point-tag">USGS Point 1</span>
+                <span class="point-dist" id="sp1-dist">Dist: -- m</span>
+              </div>
+              <div class="source-point-grid">
+                <span class="item-lbl">Lat / Lon:</span>
+                <span class="item-val" id="sp1-coords">--</span>
+                <span class="item-lbl">Turbidity:</span>
+                <span class="item-val" id="sp1-turb">-- NTU</span>
+                <span class="item-lbl">EC / SpCond:</span>
+                <span class="item-val" id="sp1-ec">-- µS/cm</span>
+                <span class="item-lbl">pH / Temp:</span>
+                <span class="item-val" id="sp1-phtemp">--</span>
+                <span class="item-lbl">IDW Weight:</span>
+                <span class="item-val text-blue" id="sp1-weight">--%</span>
+              </div>
+            </div>
+
+            <!-- USGS Point 2 -->
+            <div class="source-point-card" id="source-point-2">
+              <div class="source-point-head">
+                <span class="point-tag">USGS Point 2</span>
+                <span class="point-dist" id="sp2-dist">Dist: -- m</span>
+              </div>
+              <div class="source-point-grid">
+                <span class="item-lbl">Lat / Lon:</span>
+                <span class="item-val" id="sp2-coords">--</span>
+                <span class="item-lbl">Turbidity:</span>
+                <span class="item-val" id="sp2-turb">-- NTU</span>
+                <span class="item-lbl">EC / SpCond:</span>
+                <span class="item-val" id="sp2-ec">-- µS/cm</span>
+                <span class="item-lbl">pH / Temp:</span>
+                <span class="item-val" id="sp2-phtemp">--</span>
+                <span class="item-lbl">IDW Weight:</span>
+                <span class="item-val text-blue" id="sp2-weight">--%</span>
+              </div>
+            </div>
+
+            <!-- USGS Point 3 -->
+            <div class="source-point-card" id="source-point-3">
+              <div class="source-point-head">
+                <span class="point-tag">USGS Point 3</span>
+                <span class="point-dist" id="sp3-dist">Dist: -- m</span>
+              </div>
+              <div class="source-point-grid">
+                <span class="item-lbl">Lat / Lon:</span>
+                <span class="item-val" id="sp3-coords">--</span>
+                <span class="item-lbl">Turbidity:</span>
+                <span class="item-val" id="sp3-turb">-- NTU</span>
+                <span class="item-lbl">EC / SpCond:</span>
+                <span class="item-val" id="sp3-ec">-- µS/cm</span>
+                <span class="item-lbl">pH / Temp:</span>
+                <span class="item-val" id="sp3-phtemp">--</span>
+                <span class="item-lbl">IDW Weight:</span>
+                <span class="item-val text-blue" id="sp3-weight">--%</span>
+              </div>
+            </div>
+
+            <div class="interpolation-bridge">
+              <span>KNN-IDW (K=3)</span>
+              <span>↓</span>
+            </div>
+
+            <!-- Resulting Buoy Environmental Value -->
+            <div class="buoy-derived-box">
+              <span class="title">BUOY ENVIRONMENTAL VALUE</span>
+              <div class="source-point-grid">
+                <span class="item-lbl">Computed Turbidity:</span>
+                <span class="item-val text-blue" id="derived-turb">-- NTU</span>
+                <span class="item-lbl">Computed EC:</span>
+                <span class="item-val text-blue" id="derived-ec">-- µS/cm</span>
+                <span class="item-lbl">Computed pH:</span>
+                <span class="item-val text-blue" id="derived-ph">--</span>
+                <span class="item-lbl">Computed Temp:</span>
+                <span class="item-val text-blue" id="derived-temp">-- °C</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         3. WATER QUALITY AT BUOY
+         ===================================================================== -->
+    <section class="section-card" id="section-buoy-quality">
+      <div class="card-header-bar">
+        <div class="card-title-block">
+          <span class="card-section-num">Section 3</span>
+          <h2 class="card-title">Water Quality at Virtual Buoy Location</h2>
+          <span class="card-subtitle">USGS-Derived Environmental Value • Ground Truth Baseline</span>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <span class="card-status-badge badge-usgs">DATA SOURCE: USGS LAKE ERIE SONDE DATASET</span>
+          <span class="card-status-badge badge-usgs">STATUS: HISTORICAL USGS DATA</span>
+        </div>
+      </div>
+
+      <div class="card-body">
+        <div class="buoy-telemetry-grid">
+          <!-- pH Card -->
+          <div class="telemetry-stat-card card-ph">
+            <span class="stat-param-name">Water pH</span>
+            <div class="stat-main-value" id="disp-ph">8.35</div>
+            <div class="stat-sub-info">
+              <span>Dataset Range: 7.97 – 8.84</span>
+              <span class="stat-percentile-tag pct-normal" id="disp-ph-pct">52nd percentile</span>
+            </div>
+          </div>
+
+          <!-- Specific Conductivity Card -->
+          <div class="telemetry-stat-card card-ec">
+            <span class="stat-param-name">Specific Conductivity (EC)</span>
+            <div class="stat-main-value"><span id="disp-ec">291.0</span> <span class="stat-unit">µS/cm</span></div>
+            <div class="stat-sub-info">
+              <span>Mean: 292.57 µS/cm</span>
+              <span class="stat-percentile-tag pct-normal" id="disp-ec-pct">48th percentile</span>
+            </div>
+          </div>
+
+          <!-- Turbidity Card -->
+          <div class="telemetry-stat-card card-turb">
+            <span class="stat-param-name">Turbidity</span>
+            <div class="stat-main-value"><span id="disp-turb">3.34</span> <span class="stat-unit">NTU</span></div>
+            <div class="stat-sub-info">
+              <span>Statistical Status:</span>
+              <span class="stat-percentile-tag pct-normal" id="disp-turb-pct">62nd percentile (TYPICAL)</span>
+            </div>
+          </div>
+
+          <!-- Water Temp Card -->
+          <div class="telemetry-stat-card card-temp">
+            <span class="stat-param-name">Water Temperature</span>
+            <div class="stat-main-value"><span id="disp-temp">20.10</span> <span class="stat-unit">°C</span></div>
+            <div class="stat-sub-info">
+              <span>Dataset Range: 16.3 – 27.3 °C</span>
+              <span class="stat-percentile-tag pct-normal" id="disp-temp-pct">35th percentile</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Coordinates & Timestamp metadata -->
+        <div class="buoy-metadata-strip">
+          <div class="meta-item">
+            <span class="meta-item-lbl">USGS Latitude:</span>
+            <span class="meta-item-val text-blue" id="disp-lat">41.57963° N</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-item-lbl">USGS Longitude:</span>
+            <span class="meta-item-val text-blue" id="disp-lon">-81.57919° W</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-item-lbl">Nearest Observation Timestamp:</span>
+            <span class="meta-item-val" id="disp-timestamp">2019-06-11T10:20:54</span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-item-lbl">Dataset Statistical Indicator:</span>
+            <span class="meta-item-val text-teal" id="disp-stat-alert">TYPICAL RELATIVE TO DATASET</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         4. USGS DATASET INFORMATION
+         ===================================================================== -->
+    <section class="section-card" id="section-usgs-info">
+      <div class="card-header-bar">
+        <div class="card-title-block">
+          <span class="card-section-num">Section 4</span>
+          <h2 class="card-title">USGS Dataset Provenance &amp; Verification</h2>
+          <span class="card-subtitle">Authoritative details on the June 2019 Lake Erie Sonde Ground Truth</span>
+        </div>
+        <span class="card-status-badge badge-usgs">OFFICIAL USGS SONDE REPOSITORY</span>
+      </div>
+
+      <div class="card-body">
+        <div class="usgs-info-grid">
+          <div>
+            <table class="info-table">
+              <tbody>
+                <tr>
+                  <td>Primary Agency:</td>
+                  <td><strong>USGS (U.S. Geological Survey)</strong></td>
+                </tr>
+                <tr>
+                  <td>Dataset Name:</td>
+                  <td>Lake Erie Nearshore Water-Quality Measurements</td>
+                </tr>
+                <tr>
+                  <td>Survey Date:</td>
+                  <td>June 2019 Nearshore Sonde Transect</td>
+                </tr>
+                <tr>
+                  <td>CSV File:</td>
+                  <td class="font-mono">EC2019_QWsonde_surface_GIS_edited.csv</td>
+                </tr>
+                <tr>
+                  <td>Total Records:</td>
+                  <td class="font-mono"><strong>20,811</strong> raw observations</td>
+                </tr>
+                <tr>
+                  <td>Valid Records:</td>
+                  <td class="font-mono"><strong class="text-green">18,679</strong> valid observations (2,132 invalid sentinel -999.9 removed)</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div>
+            <table class="info-table">
+              <tbody>
+                <tr>
+                  <td>Geographic Bounds:</td>
+                  <td class="font-mono">Lat: 41.565827° N – 41.593431° N<br>Lon: -81.599167° W – -81.559214° W</td>
+                </tr>
+                <tr>
+                  <td>pH Valid Range:</td>
+                  <td class="font-mono">7.97 – 8.84 (mean: 8.37)</td>
+                </tr>
+                <tr>
+                  <td>EC / SpCond Range:</td>
+                  <td class="font-mono">280.0 – 607.0 µS/cm (mean: 292.57 µS/cm)</td>
+                </tr>
+                <tr>
+                  <td>Turbidity Range:</td>
+                  <td class="font-mono">0.00 – 29.90 NTU (mean: 3.16 NTU)</td>
+                </tr>
+                <tr>
+                  <td>Water Temp Range:</td>
+                  <td class="font-mono">16.30 – 27.27 °C (mean: 22.98 °C)</td>
+                </tr>
+                <tr>
+                  <td>Excluded Field:</td>
+                  <td class="text-muted">Dissolved oxygen (excluded per design specification)</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         5. HISTORICAL DATA REPLAY
+         ===================================================================== -->
+    <section class="section-card" id="section-data-replay">
+      <div class="card-header-bar">
+        <div class="card-title-block">
+          <span class="card-section-num">Section 5</span>
+          <h2 class="card-title">USGS Historical Data Replay</h2>
+          <span class="card-subtitle">Chronological step-through of actual USGS sonde observations • Historical Data — Not Live Monitoring</span>
+        </div>
+        <span class="card-status-badge badge-usgs" id="replay-status-badge">REPLAY PAUSED</span>
+      </div>
+
+      <div class="card-body">
+        <!-- Replay Controls Bar -->
+        <div class="replay-controls-bar">
+          <div class="replay-button-row">
+            <button class="btn btn-primary" id="btn-replay-play" onclick="controlReplay('play')">▶ Play</button>
+            <button class="btn btn-secondary" id="btn-replay-pause" onclick="controlReplay('pause')">❚❚ Pause</button>
+            <button class="btn btn-secondary" id="btn-replay-prev" onclick="controlReplay('prev')">◀ Previous</button>
+            <button class="btn btn-secondary" id="btn-replay-next" onclick="controlReplay('next')">Next ▶</button>
+            <button class="btn btn-secondary" id="btn-replay-reset" onclick="controlReplay('reset')">↺ Reset</button>
+          </div>
+
+          <div class="replay-slider-wrap">
+            <input type="range" min="0" max="18678" value="0" class="replay-slider" id="replay-slider" oninput="onReplaySlider(this.value)">
+            <span class="replay-progress-text" id="replay-index-display">Obs #00000 / 18,679</span>
+          </div>
+
+          <div style="font-size: 0.78rem;">
+            <span>Observation Time: </span>
+            <strong class="font-mono text-blue" id="replay-timestamp-disp">2019-06-11T10:00:00</strong>
+          </div>
+        </div>
+
+        <!-- Real Data Time-Series Graph (Section 15) -->
+        <div class="replay-graph-wrap">
+          <div class="graph-header-row">
+            <div style="font-size: 0.82rem; font-weight: 700; color: var(--text-secondary);">
+              REAL USGS TIME-SERIES (Historical Observations from Dataset)
+            </div>
+            <div class="graph-param-tabs">
+              <button class="tab-btn active" id="tab-graph-turb" onclick="switchGraphParam('turbidity_ntu')">Turbidity (NTU)</button>
+              <button class="tab-btn" id="tab-graph-ec" onclick="switchGraphParam('ec_us_cm')">EC (µS/cm)</button>
+              <button class="tab-btn" id="tab-graph-ph" onclick="switchGraphParam('ph')">pH</button>
+              <button class="tab-btn" id="tab-graph-temp" onclick="switchGraphParam('water_temp_c')">Temperature (°C)</button>
+            </div>
+          </div>
+          <div class="chart-canvas-box">
+            <canvas id="usgsTimeSeriesChart"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         6. FLOW-THROUGH MEASUREMENT CHAMBER
+         ===================================================================== -->
+    <section class="section-card" id="section-chamber">
+      <div class="card-header-bar">
+        <div class="card-title-block">
+          <span class="card-section-num">Section 6</span>
+          <h2 class="card-title">Flow-Through Measurement Chamber</h2>
+          <span class="card-subtitle">Digital Simulation of Active Fluidic Isolation &amp; Quiescent Sampling</span>
+        </div>
+        <span class="card-status-badge badge-sim">DIGITAL SIMULATION</span>
+      </div>
+
+      <div class="card-body">
+        <div class="chamber-flex-layout">
+          <!-- Chamber Canvas Visualizer -->
+          <div class="chamber-canvas-box">
+            <canvas id="chamberCanvas" width="460" height="230"></canvas>
+          </div>
+
+          <!-- Chamber Details Column -->
+          <div class="chamber-details-col">
+            <!-- Cycle Stepper -->
+            <div class="chamber-cycle-stepper">
+              <div class="cycle-step-node active" id="step-LAKE_MONITORING">1. LAKE STANDBY</div>
+              <span class="step-arrow">→</span>
+              <div class="cycle-step-node" id="step-CHAMBER_FILL">2. CHAMBER FILL</div>
+              <span class="step-arrow">→</span>
+              <div class="cycle-step-node" id="step-STABILIZE">3. STABILIZE</div>
+              <span class="step-arrow">→</span>
+              <div class="cycle-step-node" id="step-MEASURE">4. MEASURE</div>
+              <span class="step-arrow">→</span>
+              <div class="cycle-step-node" id="step-FLUSH">5. FLUSH</div>
+            </div>
+
+            <!-- Active Values During Measurement -->
+            <div class="chamber-measure-values">
+              <div class="title">Current Chamber Fluid Water Quality (USGS-Derived)</div>
+              <div class="chamber-values-grid">
+                <div class="ch-val-box">
+                  <div class="lbl">pH</div>
+                  <div class="val text-blue" id="ch-val-ph">8.35</div>
+                </div>
+                <div class="ch-val-box">
+                  <div class="lbl">EC (µS/cm)</div>
+                  <div class="val text-blue" id="ch-val-ec">291.0</div>
+                </div>
+                <div class="ch-val-box">
+                  <div class="lbl">Turbidity (NTU)</div>
+                  <div class="val text-blue" id="ch-val-turb">3.34</div>
+                </div>
+                <div class="ch-val-box">
+                  <div class="lbl">Temp (°C)</div>
+                  <div class="val text-blue" id="ch-val-temp">20.10</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Diagnostics -->
+            <div class="chamber-diags-grid">
+              <div class="diag-box">
+                <span class="diag-lbl">Current State:</span>
+                <span class="diag-val text-blue" id="ch-state-text">LAKE MONITORING</span>
+              </div>
+              <div class="diag-box">
+                <span class="diag-lbl">Phase Elapsed:</span>
+                <span class="diag-val" id="ch-phase-time">0.0s / 300s</span>
+              </div>
+              <div class="diag-box">
+                <span class="diag-lbl">Chamber Level:</span>
+                <span class="diag-val" id="ch-fluid-level">0%</span>
+              </div>
+              <div class="diag-box">
+                <span class="diag-lbl">Peristaltic Pump:</span>
+                <span class="diag-val" id="ch-pump-motor">OFF (STANDBY)</span>
+              </div>
+              <div class="diag-box">
+                <span class="diag-lbl">Optical Isolation:</span>
+                <span class="diag-val text-green" id="ch-optical-shield">SHIELDED</span>
+              </div>
+              <div class="diag-box">
+                <span class="diag-lbl">Fluid Quiescence:</span>
+                <span class="diag-val" id="ch-stabilized">STABILIZED</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         7. SENSOR / ADS1115 SIGNAL PATH
+         ===================================================================== -->
+    <section class="section-card" id="section-signal-path">
+      <div class="card-header-bar">
+        <div class="card-title-block">
+          <span class="card-section-num">Section 7</span>
+          <h2 class="card-title">Sensor / ADS1115 16-Bit Signal Processing Path</h2>
+          <span class="card-subtitle">Digital Simulation of Analog Transduction, Quantization &amp; Digital Filtering</span>
+        </div>
+        <span class="card-status-badge badge-sim">SENSOR / ADC SIGNAL PATH — DIGITAL SIMULATION</span>
+      </div>
+
+      <div class="card-body">
+        <!-- Pipeline Diagram -->
+        <div class="signal-path-pipeline">
+          <div class="pipeline-node">
+            <span class="node-title">USGS Environmental Value</span>
+            <span class="node-sub">Real Lake Ground Truth</span>
+          </div>
+          <span class="pipeline-arrow">→</span>
+          <div class="pipeline-node">
+            <span class="node-title">Analog Transduction</span>
+            <span class="node-sub">Sensor Response (V)</span>
+          </div>
+          <span class="pipeline-arrow">→</span>
+          <div class="pipeline-node">
+            <span class="node-title">ADS1115 16-Bit ADC</span>
+            <span class="node-sub">Quantization + Jitter</span>
+          </div>
+          <span class="pipeline-arrow">→</span>
+          <div class="pipeline-node">
+            <span class="node-title">Raw ADC Voltage</span>
+            <span class="node-sub">Hardware Signal</span>
+          </div>
+          <span class="pipeline-arrow">→</span>
+          <div class="pipeline-node">
+            <span class="node-title">Digital Filtering</span>
+            <span class="node-sub">Median + Moving Avg</span>
+          </div>
+          <span class="pipeline-arrow">→</span>
+          <div class="pipeline-node">
+            <span class="node-title">Processed Telemetry</span>
+            <span class="node-sub">LoRa Payload Value</span>
+          </div>
+        </div>
+
+        <!-- Signal Processing Table -->
+        <div class="signal-table-wrap">
+          <table class="scientific-table">
+            <thead>
+              <tr>
+                <th>Physical Parameter</th>
+                <th>Raw ADC Voltage</th>
+                <th>Filtered ADC Voltage</th>
+                <th>Raw Std Dev (σ)</th>
+                <th>Filtered Std Dev (σ)</th>
+                <th>Peak-to-Peak</th>
+                <th>Noise Reduction</th>
+                <th>Signal SNR</th>
+                <th>Calibrated Telemetry</th>
+              </tr>
+            </thead>
+            <tbody id="signal-table-body">
+              <tr>
+                <td><strong>pH Probe</strong></td>
+                <td>2.501 V</td>
+                <td>2.501 V</td>
+                <td>0.0142</td>
+                <td>0.0018</td>
+                <td>0.038 V</td>
+                <td class="text-green font-bold">87.3%</td>
+                <td>62.8 dB</td>
+                <td class="text-blue font-bold" id="sig-ph-val">8.35</td>
+              </tr>
+              <tr>
+                <td><strong>Turbidity Sensor</strong></td>
+                <td>4.015 V</td>
+                <td>4.015 V</td>
+                <td>0.0350</td>
+                <td>0.0022</td>
+                <td>0.091 V</td>
+                <td class="text-green font-bold">93.7%</td>
+                <td>65.2 dB</td>
+                <td class="text-blue font-bold" id="sig-turb-val">3.34 NTU</td>
+              </tr>
+              <tr>
+                <td><strong>EC / Conductivity</strong></td>
+                <td>0.635 V</td>
+                <td>0.635 V</td>
+                <td>0.0160</td>
+                <td>0.0015</td>
+                <td>0.042 V</td>
+                <td class="text-green font-bold">90.6%</td>
+                <td>52.5 dB</td>
+                <td class="text-blue font-bold" id="sig-ec-val">291.0 µS/cm</td>
+              </tr>
+              <tr>
+                <td><strong>Water Temperature</strong></td>
+                <td>DS18B20 digital</td>
+                <td>DS18B20 digital</td>
+                <td>0.1100</td>
+                <td>0.0210</td>
+                <td>0.280 °C</td>
+                <td class="text-green font-bold">80.9%</td>
+                <td>60.2 dB</td>
+                <td class="text-blue font-bold" id="sig-temp-val">20.10 °C</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         8. LoRa BUOY → GATEWAY TELEMETRY
+         ===================================================================== -->
+    <section class="section-card" id="section-lora">
+      <div class="card-header-bar">
+        <div class="card-title-block">
+          <span class="card-section-num">Section 8</span>
+          <h2 class="card-title">LoRa Buoy → Gateway Telemetry &amp; Remote Control</h2>
+          <span class="card-subtitle">End-to-End Packet Framing, Uplink Transmission, Gateway Reception &amp; Downlink ACK Protocol Simulation</span>
+        </div>
+        <span class="card-status-badge badge-sim">LoRa COMMUNICATION — PROTOCOL SIMULATION</span>
+      </div>
+
+      <div class="card-body">
+        <!-- Communication Path Banner -->
+        <div class="lora-comm-banner">
+          <div class="lora-flow-diagram">
+            <div class="comm-endpoint-box">
+              <span class="title">BUOY ESP32-S3</span>
+              <span class="sub">Node BUOY-01</span>
+            </div>
+            <div class="comm-path-arrow">
+              <span class="lbl">LoRa UPLINK (868/915 MHz)</span>
+              <span class="arrow">━━━━━▶</span>
+            </div>
+            <div class="comm-endpoint-box">
+              <span class="title">SHORE GATEWAY</span>
+              <span class="sub">Receiver &amp; Command Base</span>
+            </div>
+            <div class="comm-path-arrow">
+              <span class="lbl">DOWNLINK ACK / CMD</span>
+              <span class="arrow">◀━━━━━</span>
+            </div>
+            <div class="comm-endpoint-box">
+              <span class="title">PACKET DECODED &amp; ACKED</span>
+              <span class="sub">Closed-Loop Link</span>
+            </div>
+          </div>
+
+          <div class="comm-status-ticker">
+            <span class="comm-step-badge" id="lora-step-tx">1. TRANSMITTING...</span>
+            <span class="comm-step-badge" id="lora-step-rx">2. PACKET RECEIVED</span>
+            <span class="comm-step-badge" id="lora-step-dec">3. TELEMETRY DECODED</span>
+            <span class="comm-step-badge" id="lora-step-ack">4. ACK SENT</span>
+          </div>
+        </div>
+
+        <div class="lora-two-col">
+          <!-- Left: Current Simulated Packet -->
+          <div class="packet-card-box">
+            <div style="font-size: 0.82rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase;">
+              CURRENT GENERATED TELEMETRY PACKET
+            </div>
+            <div class="packet-meta-grid">
+              <span class="lbl">Packet Seq:</span>
+              <span class="val text-blue" id="pkt-seq">#00001</span>
+              <span class="lbl">Node Identifier:</span>
+              <span class="val font-mono">BUOY-01</span>
+              <span class="lbl">Latitude:</span>
+              <span class="val" id="pkt-lat">41.57963° N</span>
+              <span class="lbl">Longitude:</span>
+              <span class="val" id="pkt-lon">-81.57919° W</span>
+              <span class="lbl">Water pH:</span>
+              <span class="val" id="pkt-ph">8.35</span>
+              <span class="lbl">Conductivity (EC):</span>
+              <span class="val" id="pkt-ec">291.0 µS/cm</span>
+              <span class="lbl">Turbidity:</span>
+              <span class="val" id="pkt-turb">3.34 NTU</span>
+              <span class="lbl">Water Temp:</span>
+              <span class="val" id="pkt-temp">20.10 °C</span>
+              <span class="lbl">USGS Timestamp:</span>
+              <span class="val font-mono" id="pkt-timestamp">2019-06-11T10:20:54</span>
+              <span class="lbl">Protocol Status:</span>
+              <span class="val text-green font-bold" id="pkt-status">ACK_RECEIVED</span>
+            </div>
+          </div>
+
+          <!-- Right: Downlink Commands -->
+          <div class="lora-commands-panel">
+            <div style="font-size: 0.82rem; font-weight: 700; color: var(--text-primary); text-transform: uppercase;">
+              Shore Gateway Remote Commands
+            </div>
+            <div style="font-size: 0.74rem; color: var(--text-muted);">
+              Issue remote downlink commands to the buoy via simulated LoRa channel:
+            </div>
+            <div class="command-btn-row">
+              <button class="btn btn-action" onclick="sendLoraCommand('trigger_measurement')">⚡ Trigger Measurement</button>
+              <button class="btn btn-action" onclick="sendLoraCommand('request_status')">📋 Request Status</button>
+              <button class="btn btn-action" onclick="sendLoraCommand('change_sampling_interval', 180)">⏱ Set Interval (3m)</button>
+              <button class="btn btn-action" onclick="sendLoraCommand('initiate_chamber_cycle')">🔄 Cycle Chamber</button>
+            </div>
+            <div style="font-size: 0.75rem; font-family: var(--font-mono); color: var(--text-muted); background: #ffffff; padding: 8px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-color);" id="cmd-terminal-status">
+              Terminal: Gateway standing by for downlink commands.
+            </div>
+          </div>
+        </div>
+
+        <!-- Compact Gateway Received-Packet Table (Section 13) -->
+        <div style="margin-top: 14px;">
+          <div style="font-size: 0.82rem; font-weight: 700; color: var(--text-secondary); margin-bottom: 8px; text-transform: uppercase;">
+            Gateway Telemetry History &amp; Packet Log
+          </div>
+          <div class="lora-log-table-wrap">
+            <table class="scientific-table">
+              <thead>
+                <tr>
+                  <th>Packet #</th>
+                  <th>Wall Time</th>
+                  <th>Observation Timestamp</th>
+                  <th>pH</th>
+                  <th>EC (µS/cm)</th>
+                  <th>Turbidity (NTU)</th>
+                  <th>Temp (°C)</th>
+                  <th>Latitude</th>
+                  <th>Longitude</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="lora-packet-history-body">
+                <tr><td colspan="10" class="text-center text-muted">Awaiting first LoRa transmission packet...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         9. RESEARCH COMPARISON
+         ===================================================================== -->
+    <section class="section-card" id="section-experiment">
+      <div class="card-header-bar">
+        <div class="card-title-block">
+          <span class="card-section-num">Section 9</span>
+          <h2 class="card-title">Flow-Through vs Continuous Exposure — Digital Experiment</h2>
+          <span class="card-subtitle">Comparative Trial Evaluating Fluidic Stabilization vs Open Lake Exposure • Directly Calculated by Simulation Engine</span>
+        </div>
+        <span class="card-status-badge badge-sim">DIGITAL EXPERIMENT</span>
+      </div>
+
+      <div class="card-body">
+        <div class="exp-actions-bar">
+          <div style="display: flex; gap: 10px;">
+            <button class="btn btn-primary" id="btn-run-exp" onclick="runComparativeExperiment()">🧪 Run 30-Min Comparative Trial</button>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-secondary" onclick="exportComparisonCsv()">📥 Export Comparison CSV</button>
+            <button class="btn btn-secondary" onclick="exportTelemetryCsv()">📥 Export Telemetry CSV</button>
+          </div>
+        </div>
+
+        <!-- Summary Grid (Calculated dynamically) -->
+        <div class="exp-summary-grid">
+          <div class="exp-metric-card">
+            <span class="lbl">Turbidity Noise Reduction</span>
+            <div class="val text-green" id="exp-turb-reduct">--%</div>
+            <span class="sub">Standard deviation reduction in chamber</span>
+          </div>
+          <div class="exp-metric-card">
+            <span class="lbl">pH Variance Reduction</span>
+            <div class="val text-green" id="exp-ph-reduct">--%</div>
+            <span class="sub">Eddy &amp; wave potential jitter reduction</span>
+          </div>
+          <div class="exp-metric-card">
+            <span class="lbl">Energy Savings Per Cycle</span>
+            <div class="val text-teal" id="exp-energy-savings">--%</div>
+            <span class="sub">Duty-cycled sampling vs continuous run</span>
+          </div>
+          <div class="exp-metric-card">
+            <span class="lbl">Battery Life Multiplier</span>
+            <div class="val text-green" id="exp-battery-mult">--x</div>
+            <span class="sub">Extended autonomous endurance ratio</span>
+          </div>
+        </div>
+
+        <!-- Comparative Table -->
+        <div class="signal-table-wrap">
+          <table class="scientific-table">
+            <thead>
+              <tr>
+                <th>Evaluated Metric</th>
+                <th>Conventional Open Lake Exposure (A)</th>
+                <th>Flow-Through Chamber Measurement (B)</th>
+                <th>Calculated Engineering Delta</th>
+              </tr>
+            </thead>
+            <tbody id="exp-table-body">
+              <tr>
+                <td>Turbidity Standard Dev (σ)</td>
+                <td id="exp-turb-a">0.0380</td>
+                <td id="exp-turb-b">0.0021</td>
+                <td class="text-green font-bold" id="exp-turb-delta">Calculated upon trial execution</td>
+              </tr>
+              <tr>
+                <td>pH Standard Dev (σ)</td>
+                <td id="exp-ph-a">0.0165</td>
+                <td id="exp-ph-b">0.0014</td>
+                <td class="text-green font-bold" id="exp-ph-delta">Calculated upon trial execution</td>
+              </tr>
+              <tr>
+                <td>Active Sampling Duration</td>
+                <td id="exp-time-a">100% (Continuous)</td>
+                <td id="exp-time-b">~2.7% (8s / 300s)</td>
+                <td class="text-teal font-bold" id="exp-time-delta">97.3% Duty Cycle Reduction</td>
+              </tr>
+              <tr>
+                <td>Energy Per 5-Min Cycle</td>
+                <td id="exp-energy-a">17.9 mWh</td>
+                <td id="exp-energy-b">4.8 mWh</td>
+                <td class="text-teal font-bold" id="exp-energy-delta">Calculated upon trial execution</td>
+              </tr>
+              <tr>
+                <td>Estimated Battery Life (0 Sun)</td>
+                <td id="exp-life-a">3.8 Days</td>
+                <td id="exp-life-b">14.2 Days</td>
+                <td class="text-green font-bold" id="exp-life-delta">Calculated upon trial execution</td>
+              </tr>
+              <tr>
+                <td>Communication Overhead</td>
+                <td id="exp-comm-a">120 Packets/hr</td>
+                <td id="exp-comm-b">12 Packets/hr</td>
+                <td class="text-teal font-bold" id="exp-comm-delta">Calculated upon trial execution</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Page Footer -->
+  <footer class="page-footer">
+    <div>Solar-Powered Autonomous Lake Water Quality Monitoring Buoy — Digital Simulation Prototype</div>
+    <div class="footer-meta">
+      Environmental Baseline: USGS Lake Erie Nearshore Sonde Dataset (June 2019) • Architecture: ESP32-S3 + ADS1115 + LoRa Gateway
+    </div>
+  </footer>
+
+  <!-- Scripts -->
+  <script src="/static/js/chamber_anim.js"></script>
+  <script src="/static/js/lake_map.js"></script>
+  <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
