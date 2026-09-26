@@ -69,42 +69,98 @@ class BuoySystem:
         self.buoy_x = self.env.buoy_x
         self.buoy_y = self.env.buoy_y
 
+        # Initialize GPS anchor at canonical Lake Erie coordinates
+        from buoy_sim.data.usgs_loader import map_xy_to_usgs_latlon, usgs_latlon_to_map_xy
+        init_lat, init_lon = map_xy_to_usgs_latlon(self.buoy_x, self.buoy_y)
+        self.gps.set_anchor(init_lat, init_lon)
+
+        # Single Authoritative Buoy State
+        init_usgs = self.env.get_usgs_conditions(self.buoy_x, self.buoy_y)
+        self.buoy_state: Dict[str, Any] = {
+            "latitude": init_lat,
+            "longitude": init_lon,
+            "x": self.buoy_x,
+            "y": self.buoy_y,
+            "timestamp": self.sim_time_s,
+            "environmental_values": {
+                "ph": init_usgs["ph"],
+                "ec_us_cm": init_usgs["ec_us_cm"],
+                "turbidity_ntu": init_usgs["turbidity_ntu"],
+                "water_temp_c": init_usgs["water_temp_c"],
+            },
+            "zone_name": self.env.get_current_zone_name(),
+            "zone_id": self.env.current_zone_id,
+            "data_source": "USGS Lake Erie Nearshore Sonde Dataset (KNN-IDW K=3)",
+        }
+
         # Most recent snapshot
         self.last_snapshot: Dict[str, Any] = {}
 
     def set_buoy_position(self, x: float, y: float) -> Dict[str, Any]:
-        """Update virtual buoy position, GPS anchor, and local environmental conditions."""
-        from buoy_sim.sensors.spatial_field import map_xy_to_lat_lon
+        """
+        Update virtual buoy position, GPS anchor, and local environmental conditions.
+        Both Canvas and Leaflet share this authoritative state update.
+        """
+        from buoy_sim.data.usgs_loader import map_xy_to_usgs_latlon
         cx, cy = self.env.set_buoy_position(x, y)
         self.buoy_x = cx
         self.buoy_y = cy
-        lat, lon = map_xy_to_lat_lon(cx, cy)
+        lat, lon = map_xy_to_usgs_latlon(cx, cy)
         self.gps.set_anchor(lat, lon)
+
+        # Reset filter buffer so new position immediately reflects in sensor values
+        self.filter.reset()
+
+        # Query USGS KNN-IDW at new coordinates
+        usgs = self.env.get_usgs_conditions(cx, cy)
+        self.buoy_state = {
+            "latitude": lat,
+            "longitude": lon,
+            "x": cx,
+            "y": cy,
+            "timestamp": self.sim_time_s,
+            "environmental_values": {
+                "ph": usgs["ph"],
+                "ec_us_cm": usgs["ec_us_cm"],
+                "turbidity_ntu": usgs["turbidity_ntu"],
+                "water_temp_c": usgs["water_temp_c"],
+            },
+            "zone_name": self.env.get_current_zone_name(),
+            "zone_id": self.env.current_zone_id,
+            "data_source": "USGS Lake Erie Nearshore Sonde Dataset (KNN-IDW K=3)",
+        }
+
+        # Step simulation with dt=0 to immediately update sensor pipelines and last_snapshot
+        self.step(0.0)
+
         return {
             "buoy_x": self.buoy_x,
             "buoy_y": self.buoy_y,
+            "x": self.buoy_x,
+            "y": self.buoy_y,
             "latitude": lat,
             "longitude": lon,
             "zone_name": self.env.get_current_zone_name(),
             "zone_id": self.env.current_zone_id,
+            "environmental_values": self.buoy_state["environmental_values"],
+            "data_source": self.buoy_state["data_source"],
         }
 
     def set_buoy_lat_lon(self, lat: float, lon: float) -> Dict[str, Any]:
-        """Update buoy position from real geographic GPS coordinates."""
+        """
+        Update buoy position from real geographic GPS coordinates.
+        Converts lat/lon to map (x, y) and updates authoritative buoy state.
+        """
         from buoy_sim.data.usgs_loader import usgs_latlon_to_map_xy
         x, y = usgs_latlon_to_map_xy(lat, lon)
-        cx, cy = self.env.set_buoy_position(x, y)
-        self.buoy_x = cx
-        self.buoy_y = cy
+        res = self.set_buoy_position(x, y)
+        # Retain authoritative real GPS coordinates across the entire lake extent
         self.gps.set_anchor(lat, lon)
-        return {
-            "buoy_x": self.buoy_x,
-            "buoy_y": self.buoy_y,
-            "latitude": lat,
-            "longitude": lon,
-            "zone_name": self.env.get_current_zone_name(),
-            "zone_id": self.env.current_zone_id,
-        }
+        self.buoy_state["latitude"] = lat
+        self.buoy_state["longitude"] = lon
+        res["latitude"] = lat
+        res["longitude"] = lon
+        return res
 
     def step(self, dt_s: float = 1.0) -> Dict[str, Any]:
         """
@@ -195,10 +251,16 @@ class BuoySystem:
         # 8. Watchdog Monitoring & Self-Check
         wd_diag = self.watchdog.check(self.sim_time_s)
 
+        # Synchronize authoritative buoy_state timestamp
+        self.buoy_state["timestamp"] = self.sim_time_s
+
         # Package full diagnostic snapshot
         self.last_snapshot = {
             "sim_time_s": self.sim_time_s,
             "hour_of_day": ground_truth["hour_of_day"],
+            "buoy_state": dict(self.buoy_state),
+            "gps": nav_data["gps"],
+            "mpu6050": nav_data["imu"],
             "ground_truth": ground_truth,
             "spatial": {
                 "buoy_x": self.buoy_x,

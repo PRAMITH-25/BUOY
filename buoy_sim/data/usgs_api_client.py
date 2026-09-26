@@ -200,7 +200,13 @@ class USGSWaterApiClient:
         if self._csv_lookup:
             obs = self._csv_lookup.query_by_latlon(lat, lon)
         else:
-            obs = {"ph": 8.35, "ec_us_cm": 291.0, "turbidity_ntu": 3.34, "water_temp_c": 20.10, "nearest_record_timestamp": "2019-06-11T10:20:54"}
+            obs = USGSLookup._fallback(lat, lon)
+
+        ph_v = obs.get("ph", 8.38)
+        ec_v = obs.get("ec_us_cm", 288.8)
+        turb_v = obs.get("turbidity_ntu", 2.15)
+        temp_v = obs.get("water_temp_c", 22.0)
+        ts_v = obs.get("nearest_record_timestamp", "2019-06-11T10:20:54")
 
         fallback_station = {
             "station_id": "USGS-OFFLINE-CSV",
@@ -208,27 +214,27 @@ class USGSWaterApiClient:
             "latitude": lat,
             "longitude": lon,
             "agency": "USGS",
-            "latest_timestamp": obs.get("nearest_record_timestamp", "June 2019"),
+            "latest_timestamp": ts_v,
             "parameters": {
-                "ph": {"value": obs.get("ph", 8.35), "name": "pH", "unit": "", "code": "00400"},
-                "ec_us_cm": {"value": obs.get("ec_us_cm", 291.0), "name": "Specific Conductance", "unit": "µS/cm", "code": "00095"},
-                "turbidity_ntu": {"value": obs.get("turbidity_ntu", 3.34), "name": "Turbidity", "unit": "NTU", "code": "63680"},
-                "water_temp_c": {"value": obs.get("water_temp_c", 20.10), "name": "Water Temperature", "unit": "°C", "code": "00010"},
+                "ph": {"value": ph_v, "name": "pH", "unit": "", "code": "00400"},
+                "ec_us_cm": {"value": ec_v, "name": "Specific Conductance", "unit": "µS/cm", "code": "00095"},
+                "turbidity_ntu": {"value": turb_v, "name": "Turbidity", "unit": "NTU", "code": "63680"},
+                "water_temp_c": {"value": temp_v, "name": "Water Temperature", "unit": "°C", "code": "00010"},
             }
         }
 
         return {
             "stations": [fallback_station],
             "summary": {
-                "ph": obs.get("ph", 8.35),
-                "ec_us_cm": obs.get("ec_us_cm", 291.0),
-                "turbidity_ntu": obs.get("turbidity_ntu", 3.34),
-                "water_temp_c": obs.get("water_temp_c", 20.10),
+                "ph": ph_v,
+                "ec_us_cm": ec_v,
+                "turbidity_ntu": turb_v,
+                "water_temp_c": temp_v,
             },
             "data_source": "USGS Lake Erie Sonde Historical CSV (Offline Fallback)",
             "status": "HISTORICAL_DATA",
             "is_real_api": False,
-            "observation_time": obs.get("nearest_record_timestamp", "June 2019"),
+            "observation_time": ts_v,
             "warning": f"Live USGS API unavailable ({error_msg or 'timeout'}). Operating with offline USGS historical dataset.",
             "disclaimer": "Historical USGS observations providing baseline water parameters.",
         }

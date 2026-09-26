@@ -22,12 +22,13 @@ class TestWebEndpoints:
         assert "USGS Lake Erie Nearshore Sonde Dataset" in html
         assert "HISTORICAL DATA" in html
         assert "NOT LIVE MEASUREMENTS" in html
-        assert "LoRa COMMUNICATION" in html
-        assert "PROTOCOL SIMULATION" in html
-        assert "Interactive Water Body &amp; USGS Spatial Heatmap" in html
-        assert "Flow-Through Measurement Chamber" in html
-        assert "Power Subsystem" in html
-        assert "Flow-Through vs Continuous Exposure" in html
+        # Verify removed sections 4, 5, 6 are not present in rendered dashboard HTML
+        assert "section-lora" not in html
+        assert "section-power" not in html
+        assert "section-experiment" not in html
+        assert "Interactive Water Body &amp; Simulation Water Regions" in html
+        assert "FLOW-THROUGH CHAMBER — SIMULATION" in html
+        assert "zone-jump-btn" in html
 
     def test_status_endpoint(self, client):
         """Status endpoint returns ground truth, sensors, chamber, power, lora."""

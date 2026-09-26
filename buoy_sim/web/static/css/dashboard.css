@@ -2139,3 +2139,200 @@ body {
   font-size: 0.68rem;
   color: var(--text-muted);
 }
+
+/* ==========================================================================
+   Leaflet Digital Twin Map & Simulation Water Regions
+   ========================================================================== */
+.leaflet-map-wrapper {
+  position: relative;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-color);
+  background: #0f172a;
+}
+
+#realLeafletMap {
+  width: 100%;
+  height: 520px;
+  border-radius: var(--radius-md);
+  z-index: 1;
+}
+
+.leaflet-overlay-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  background: rgba(15, 23, 42, 0.90);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  color: #f1f5f9;
+  font-size: 0.78rem;
+  gap: 10px;
+}
+
+.overlay-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ov-lbl {
+  color: #94a3b8;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.ov-val {
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
+/* Custom Marker Pin & Radar Animation */
+.leaflet-buoy-icon-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.buoy-radar-ping {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(56, 189, 248, 0.35);
+  border: 1.5px solid rgba(56, 189, 248, 0.7);
+  animation: radar-ping 2.2s infinite ease-out;
+  pointer-events: none;
+}
+
+@keyframes radar-ping {
+  0% { transform: scale(0.4); opacity: 0.9; }
+  60% { transform: scale(1.4); opacity: 0.25; }
+  100% { transform: scale(2.0); opacity: 0; }
+}
+
+.buoy-marker-pin {
+  position: relative;
+  z-index: 2;
+  filter: drop-shadow(0 2px 5px rgba(0,0,0,0.35));
+  cursor: grab;
+  transition: transform 0.15s ease;
+}
+
+.buoy-marker-pin:hover {
+  transform: scale(1.15);
+}
+
+/* Zone Tooltip */
+.leaflet-zone-tooltip {
+  background: rgba(15, 23, 42, 0.92) !important;
+  color: #f8fafc !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  border-radius: 6px !important;
+  padding: 6px 10px !important;
+  font-size: 0.8rem !important;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25) !important;
+}
+
+.zone-tooltip-box strong {
+  display: block;
+  margin-bottom: 2px;
+}
+
+/* Active Simulation Zone Card Styling */
+.active-zone-header-box {
+  background: linear-gradient(135deg, rgba(2, 132, 199, 0.08) 0%, rgba(56, 189, 248, 0.04) 100%);
+  border: 1px solid #bae6fd;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.active-zone-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.active-zone-badge {
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: var(--accent-blue);
+  letter-spacing: -0.2px;
+}
+
+.active-zone-description {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+/* Zone Quick Jump Toolbar */
+.zone-jump-section {
+  margin: 10px 0 14px 0;
+}
+
+.zone-jump-title {
+  font-size: 0.70rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.zone-jump-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 5px;
+}
+
+@media (max-width: 800px) {
+  .zone-jump-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.zone-jump-btn {
+  padding: 5px 6px;
+  font-size: 0.70rem;
+  font-weight: 700;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.zone-jump-btn:hover {
+  background: var(--accent-blue-subtle);
+  border-color: var(--accent-blue);
+  color: var(--accent-blue);
+}
+
+.zone-jump-btn.active {
+  background: var(--accent-blue);
+  border-color: var(--accent-blue);
+  color: #ffffff;
+  box-shadow: 0 1px 4px rgba(2, 132, 199, 0.35);
+}
+
+.zone-jump-btn[data-zone-id="open_lake"].active { background: #0284c7; border-color: #0284c7; }
+.zone-jump-btn[data-zone-id="urban_nearshore"].active { background: #d97706; border-color: #d97706; }
+.zone-jump-btn[data-zone-id="river_inflow"].active { background: #dc2626; border-color: #dc2626; }
+.zone-jump-btn[data-zone-id="runoff_zone"].active { background: #7c3aed; border-color: #7c3aed; }
+.zone-jump-btn[data-zone-id="reference_zone"].active { background: #059669; border-color: #059669; }

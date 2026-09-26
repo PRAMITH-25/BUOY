@@ -456,6 +456,9 @@ class LakeMapVisualizer {
         this.localUsgs = data.usgs_data;
       }
       this.updateHUDInfo();
+      if (typeof syncUI === "function") {
+        syncUI(data);
+      }
       if (typeof pollStatus === "function") {
         pollStatus();
       }

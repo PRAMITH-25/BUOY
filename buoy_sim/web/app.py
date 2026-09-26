@@ -23,8 +23,24 @@ from buoy_sim.lora.packet import (
 from buoy_sim.core.location import get_location_config, set_location_config, get_nearby_stations
 from buoy_sim.data.weather_client import get_weather_client
 from buoy_sim.data.usgs_api_client import get_usgs_api_client
+from buoy_sim.zones.water_regions import (
+    get_zone_from_lat_lon,
+    get_zone_water_conditions,
+    generate_sensor_readings,
+    get_all_zones_geojson,
+)
+
+from flask.json.provider import DefaultJSONProvider
+
+class CustomJSONProvider(DefaultJSONProvider):
+    def default(self, obj):
+        if isinstance(obj, bytes):
+            return obj.hex()
+        return super().default(obj)
 
 app = Flask(__name__)
+app.json_provider_class = CustomJSONProvider
+app.json = CustomJSONProvider(app)
 
 # Global Simulation Instance
 system = BuoySystem(initial_soc_pct=85.0)
@@ -148,7 +164,7 @@ def index():
 @app.route("/api/status", methods=["GET"])
 def get_status():
     with sim_lock:
-        snap = system.last_snapshot or system.step(0.1)
+        snap = dict(system.last_snapshot or system.step(0.1))
         snap["is_running"] = is_running
         snap["speed_multiplier"] = speed_multiplier
         snap["usgs_info"] = system.env.usgs_info
@@ -175,6 +191,16 @@ def get_status():
         }
         snap["lora_exchange"] = list(lora_exchange_log)[-20:]
 
+        # Single Authoritative Buoy State & Telemetry Sync
+        snap["buoy_state"] = dict(system.buoy_state)
+        snap["gps"] = {
+            "latitude": system.gps.latitude,
+            "longitude": system.gps.longitude,
+            "satellites": system.gps.satellites,
+            "hdop": system.gps.hdop,
+        }
+        snap["mpu6050"] = system.last_snapshot.get("mpu6050", {})
+
         # Real Location & Weather Integration
         loc = get_location_config()
         snap["location"] = {
@@ -184,7 +210,9 @@ def get_status():
             "longitude": system.gps.longitude,
         }
         w_client = get_weather_client()
-        w_data = w_client._cache or {}
+        w_data = w_client._cache
+        if not w_data:
+            w_data = w_client.get_weather(system.gps.latitude, system.gps.longitude)
         snap["weather_summary"] = {
             "air_temperature_c": w_data.get("air_temperature_c"),
             "precipitation_mm": w_data.get("precipitation_mm", 0.0),
@@ -193,9 +221,32 @@ def get_status():
             "wind_direction_deg": w_data.get("wind_direction_deg"),
             "cloud_cover_pct": w_data.get("cloud_cover_pct"),
             "shortwave_radiation_w_m2": w_data.get("shortwave_radiation_w_m2"),
-            "status": w_data.get("status", "REAL_API_DATA" if w_data else "OFFLINE_FALLBACK"),
+            "status": w_data.get("status", "REAL_API_DATA" if w_data.get("is_real_api") else "OFFLINE_FALLBACK"),
             "source": w_data.get("source", "Open-Meteo Weather API"),
             "observation_time": w_data.get("observation_time"),
+            "is_real_api": w_data.get("is_real_api", False),
+            "warning": w_data.get("warning"),
+            "disclaimer": w_data.get("disclaimer"),
+        }
+        # Zone-based simulation water quality
+        buoy_lat = system.gps.latitude
+        buoy_lon = system.gps.longitude
+        sim_zone = get_zone_from_lat_lon(buoy_lat, buoy_lon)
+        zone_wq = get_zone_water_conditions(sim_zone["id"], buoy_lat, buoy_lon, system.sim_time_s)
+        snap["sim_zone"] = {
+            "id": sim_zone["id"],
+            "name": sim_zone["name"],
+            "short_name": sim_zone["short_name"],
+            "description": sim_zone["description"],
+        }
+        snap["water_quality"] = {
+            "ph": zone_wq["ph"],
+            "ec_us_cm": zone_wq["ec_us_cm"],
+            "turbidity_ntu": zone_wq["turbidity_ntu"],
+            "water_temp_c": zone_wq["water_temp_c"],
+            "tds_ppm": zone_wq["tds_ppm"],
+            "simulation_disclaimer": "SIMULATED SENSOR DATA — NOT LIVE HARDWARE",
+            "source": "Zone-based simulation model",
         }
         return jsonify(snap)
 
@@ -263,30 +314,83 @@ def set_weather():
 def set_buoy_position():
     with sim_lock:
         data = request.get_json(silent=True) or request.form or {}
-        if "latitude" in data and "longitude" in data:
-            lat = float(data["latitude"])
-            lon = float(data["longitude"])
+        # Support flexible coordinate keys from Leaflet, Canvas, or automated test calls
+        lat_val = data.get("latitude") if "latitude" in data else data.get("lat")
+        lon_val = data.get("longitude") if "longitude" in data else (data.get("lon") if "lon" in data else data.get("lng"))
+
+        if lat_val is not None and lon_val is not None:
+            lat = float(lat_val)
+            lon = float(lon_val)
+            from buoy_sim.zones.water_regions import snap_to_lake_erie_water
+            lat, lon = snap_to_lake_erie_water(lat, lon)
             pos_info = system.set_buoy_lat_lon(lat, lon)
         else:
             x = float(data.get("x", 500.0))
             y = float(data.get("y", 300.0))
             pos_info = system.set_buoy_position(x, y)
 
-        snap = system.step(0.0)
-        # Query USGS data for the new buoy position
+        snap = system.last_snapshot or {}
+        env_vals = system.buoy_state["environmental_values"]
         usgs_data = system.env.get_usgs_conditions(system.buoy_x, system.buoy_y)
+        loader = system.env._usgs_loader
+        pcts = {
+            "ph": loader.get_percentile("ph", usgs_data["ph"]),
+            "ec_us_cm": loader.get_percentile("ec_us_cm", usgs_data["ec_us_cm"]),
+            "turbidity_ntu": loader.get_percentile("turbidity_ntu", usgs_data["turbidity_ntu"]),
+            "water_temp_c": loader.get_percentile("water_temp_c", usgs_data["water_temp_c"]),
+        } if loader else {"ph": 50, "ec_us_cm": 50, "turbidity_ntu": 50, "water_temp_c": 50}
+
+        # Zone-based simulation water quality (primary display values)
+        buoy_lat = float(system.buoy_state["latitude"])
+        buoy_lon = float(system.buoy_state["longitude"])
+        sim_zone = get_zone_from_lat_lon(buoy_lat, buoy_lon)
+        zone_wq = get_zone_water_conditions(sim_zone["id"], buoy_lat, buoy_lon, system.sim_time_s)
+
         return jsonify({
             "status": "POSITION_UPDATED",
-            "buoy_x": system.buoy_x,
-            "buoy_y": system.buoy_y,
-            "zone_id": pos_info.get("zone_id", "normal"),
-            "zone_name": pos_info["zone_name"],
-            "latitude": pos_info["latitude"],
-            "longitude": pos_info["longitude"],
-            "sensors": snap["sensors"],
-            "ground_truth": snap["ground_truth"],
-            "spatial": snap["spatial"],
+            "latitude": buoy_lat,
+            "longitude": buoy_lon,
+            "x": float(system.buoy_state["x"]),
+            "y": float(system.buoy_state["y"]),
+            # Zone-based water quality is primary
+            "ph": zone_wq["ph"],
+            "pH": zone_wq["ph"],
+            "ec_us_cm": zone_wq["ec_us_cm"],
+            "turbidity_ntu": zone_wq["turbidity_ntu"],
+            "water_temp_c": zone_wq["water_temp_c"],
+            "timestamp": system.sim_time_s,
+            "buoy_x": float(system.buoy_state["x"]),
+            "buoy_y": float(system.buoy_state["y"]),
+            "zone_id": sim_zone["id"],
+            "zone_name": sim_zone["name"],
+            "sim_zone": {
+                "id": sim_zone["id"],
+                "name": sim_zone["name"],
+                "short_name": sim_zone["short_name"],
+                "description": sim_zone["description"],
+            },
+            "water_quality": {
+                "ph": zone_wq["ph"],
+                "ec_us_cm": zone_wq["ec_us_cm"],
+                "turbidity_ntu": zone_wq["turbidity_ntu"],
+                "water_temp_c": zone_wq["water_temp_c"],
+                "tds_ppm": zone_wq["tds_ppm"],
+                "simulation_disclaimer": "SIMULATED SENSOR DATA — NOT LIVE HARDWARE",
+            },
+            "buoy_state": dict(system.buoy_state),
+            "gps": {
+                "latitude": system.gps.latitude,
+                "longitude": system.gps.longitude,
+                "satellites": system.gps.satellites,
+                "hdop": system.gps.hdop,
+            },
+            "mpu6050": snap.get("mpu6050", {}),
+            "sensors": snap.get("sensors", {}),
+            "ground_truth": snap.get("ground_truth", {}),
+            "spatial": snap.get("spatial", {}),
             "usgs_data": usgs_data,
+            "contributors": usgs_data.get("contributors", []),
+            "percentiles": pcts,
         })
 
 @app.route("/api/control/command", methods=["POST"])
@@ -550,6 +654,21 @@ def get_power():
 def get_experiment_defaults():
     """Return default experiment parameters for the dashboard."""
     return jsonify(DEFAULT_EXPERIMENT_PARAMS)
+
+
+
+@app.route("/api/zones", methods=["GET"])
+def get_zones():
+    """Return simulation zone definitions for Leaflet map overlay rendering."""
+    with sim_lock:
+        buoy_lat = system.gps.latitude
+        buoy_lon = system.gps.longitude
+        current_zone = get_zone_from_lat_lon(buoy_lat, buoy_lon)
+    return jsonify({
+        "zones": get_all_zones_geojson(),
+        "current_zone_id": current_zone["id"],
+        "simulation_disclaimer": "These are clearly labeled SIMULATION ZONES — not verified scientific pollution boundaries.",
+    })
 
 
 @app.route("/api/map", methods=["GET"])

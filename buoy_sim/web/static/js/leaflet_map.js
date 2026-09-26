@@ -19,18 +19,23 @@ class RealLeafletMap {
     this.buoyMarker = null;
     this.mooringCircle = null;
     this.stationLayer = null;
+    this.zoneLayerGroup = null;
+    this.zonePolygons = {};
+    this.zonesData = [];
+    this.currentZoneId = null;
     this.stations = [];
     this.isDragging = false;
     this.lastSentLat = null;
     this.lastSentLon = null;
     this.throttleTimer = null;
     this.config = {
-      latitude: 41.57963,
-      longitude: -81.57919,
+      latitude: 41.5830,
+      longitude: -81.5750,
       zoom: 13,
       water_body_name: "Lake Erie (Cleveland / Euclid Nearshore)",
     };
 
+    window.realLeafletMap = this;
     this.init();
   }
 
@@ -53,8 +58,8 @@ class RealLeafletMap {
       console.warn("Using default map config, /api/map error:", err);
     }
 
-    const centerLat = (this.config.center && this.config.center.latitude) || this.config.latitude || 41.57963;
-    const centerLon = (this.config.center && this.config.center.longitude) || this.config.longitude || -81.57919;
+    const centerLat = (this.config.center && this.config.center.latitude) || this.config.latitude || 41.5830;
+    const centerLon = (this.config.center && this.config.center.longitude) || this.config.longitude || -81.5750;
     const zoomLevel = this.config.zoom || 13;
 
     // Tile Layers
@@ -92,8 +97,10 @@ class RealLeafletMap {
       "OpenTopoMap (Topography)": openTopo,
     };
 
+    this.zoneLayerGroup = L.layerGroup().addTo(this.map);
     this.stationLayer = L.layerGroup().addTo(this.map);
     const overlayMaps = {
+      "🌊 Simulation Water Regions": this.zoneLayerGroup,
       "USGS Monitoring Stations": this.stationLayer,
     };
 
@@ -109,16 +116,16 @@ class RealLeafletMap {
       html: `
         <div class="buoy-radar-ping"></div>
         <div class="buoy-marker-pin">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
             <circle cx="12" cy="12" r="10" fill="#0284c7" stroke="#ffffff" stroke-width="2.5"/>
             <circle cx="12" cy="12" r="4.5" fill="#38bdf8"/>
             <path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round"/>
           </svg>
         </div>
       `,
-      iconSize: [36, 36],
-      iconAnchor: [18, 18],
-      popupAnchor: [0, -18],
+      iconSize: [40, 40],
+      iconAnchor: [20, 20],
+      popupAnchor: [0, -20],
     });
 
     // Draggable Buoy Marker
@@ -126,16 +133,17 @@ class RealLeafletMap {
       icon: buoyIcon,
       draggable: true,
       autoPan: true,
-      title: "Virtual Buoy (Drag to move)",
+      title: "Virtual Buoy (Drag to move across water regions)",
+      zIndexOffset: 1000,
     }).addTo(this.map);
 
-    // Mooring radius circle (15m visual footprint)
+    // Mooring radius circle (35m visual watch circle)
     this.mooringCircle = L.circle([buoyLat, buoyLon], {
-      radius: 35, // 35m visual watch circle
+      radius: 35,
       color: "#0284c7",
       fillColor: "#38bdf8",
-      fillOpacity: 0.18,
-      weight: 1.5,
+      fillOpacity: 0.20,
+      weight: 2,
       dashArray: "4, 4",
     }).addTo(this.map);
 
@@ -144,10 +152,13 @@ class RealLeafletMap {
         <div class="popup-badge badge-sim">SIMULATION · VIRTUAL BUOY</div>
         <h4>Autonomous Solar Buoy</h4>
         <div class="popup-meta">
+          <div><strong>Active Region:</strong> <span id="popup-buoy-zone" class="text-blue font-bold">RIVER INFLOW</span></div>
           <div><strong>Latitude:</strong> <span id="popup-buoy-lat">${buoyLat.toFixed(5)}°</span></div>
           <div><strong>Longitude:</strong> <span id="popup-buoy-lon">${buoyLon.toFixed(5)}°</span></div>
-          <div><strong>Mooring:</strong> 15m radius watch circle</div>
-          <div class="popup-note">Drag marker anywhere on Lake Erie to sample spatial water quality.</div>
+          <div id="popup-buoy-wq" style="margin-top:6px;padding-top:6px;border-top:1px solid #e2e8f0;font-size:0.78rem;">
+            pH: <strong id="pop-ph">--</strong> | EC: <strong id="pop-ec">--</strong> µS/cm | Turb: <strong id="pop-turb">--</strong> NTU
+          </div>
+          <div class="popup-note">Drag buoy marker into any water region to change simulated water quality.</div>
         </div>
       </div>
     `);
@@ -175,9 +186,132 @@ class RealLeafletMap {
       this.sendPositionImmediate(pos.lat, pos.lng);
     });
 
-    // Load nearby stations & weather
+    // Map click to reposition virtual buoy
+    this.map.on("click", (e) => {
+      const lat = e.latlng.lat;
+      const lon = e.latlng.lng;
+      this.updateBuoyPosition(lat, lon);
+      this.sendPositionImmediate(lat, lon);
+    });
+
+    // Load simulation zones first, then stations & weather
+    await this.loadSimulationZones();
     await this.loadNearbyStations();
     await this.loadWeatherWidget();
+  }
+
+  async loadSimulationZones() {
+    try {
+      const res = await fetch("/api/zones");
+      if (!res.ok) return;
+      const data = await res.json();
+      this.zonesData = data.zones || [];
+
+      if (!this.zoneLayerGroup) return;
+      this.zoneLayerGroup.clearLayers();
+      this.zonePolygons = {};
+
+      this.zonesData.forEach((zone) => {
+        const poly = L.polygon(zone.polygon, {
+          color: zone.color,
+          fillColor: zone.fill_color,
+          fillOpacity: zone.fill_opacity || 0.22,
+          weight: 2,
+          dashArray: "5, 5",
+        });
+
+        poly.bindTooltip(
+          `<div class="zone-tooltip-box">
+            <strong style="color:${zone.color};">${zone.name}</strong><br>
+            <span style="font-size:0.75rem;color:#334155;">${zone.description}</span><br>
+            <span style="font-size:0.72rem;color:#64748b;font-weight:600;">(Click or drag buoy to enter zone)</span>
+          </div>`,
+          { sticky: true, direction: "top", className: "leaflet-zone-tooltip" }
+        );
+
+        poly.on("click", (e) => {
+          L.DomEvent.stopPropagation(e);
+          const lat = e.latlng.lat;
+          const lon = e.latlng.lng;
+          this.updateBuoyPosition(lat, lon);
+          this.sendPositionImmediate(lat, lon);
+        });
+
+        this.zonePolygons[zone.id] = poly;
+        this.zoneLayerGroup.addLayer(poly);
+      });
+
+      if (data.current_zone_id) {
+        this.highlightZone(data.current_zone_id);
+      }
+    } catch (err) {
+      console.warn("Could not load simulation zones:", err);
+    }
+  }
+
+  highlightZone(zoneId) {
+    if (!zoneId) return;
+    this.currentZoneId = zoneId;
+
+    for (const [id, poly] of Object.entries(this.zonePolygons)) {
+      const isCurrent = id === zoneId;
+      const zData = this.zonesData.find((z) => z.id === id);
+      if (isCurrent) {
+        poly.setStyle({
+          weight: 4,
+          dashArray: null,
+          fillOpacity: 0.38,
+        });
+        if (poly.bringToFront) poly.bringToFront();
+        if (this.buoyMarker && this.buoyMarker.bringToFront) this.buoyMarker.bringToFront();
+      } else {
+        poly.setStyle({
+          weight: 2,
+          dashArray: "5, 5",
+          fillOpacity: (zData && zData.fill_opacity) || 0.20,
+        });
+      }
+    }
+
+    // Update active class on zone jump pills
+    document.querySelectorAll(".zone-jump-btn").forEach((btn) => {
+      if (btn.getAttribute("data-zone-id") === zoneId) {
+        btn.classList.add("active");
+      } else {
+        btn.classList.remove("active");
+      }
+    });
+  }
+
+  jumpToZone(zoneId) {
+    const targetCoords = {
+      open_lake: [41.6350, -81.5650],
+      urban_nearshore: [41.5750, -81.6100],
+      river_inflow: [41.5950, -81.5700],
+      runoff_zone: [41.6180, -81.5400],
+      reference_zone: [41.6320, -81.5050],
+    };
+
+    let centerLat, centerLon;
+    if (targetCoords[zoneId]) {
+      [centerLat, centerLon] = targetCoords[zoneId];
+    } else {
+      const z = this.zonesData.find((item) => item.id === zoneId);
+      if (!z || !z.polygon || z.polygon.length === 0) return;
+      let sumLat = 0, sumLon = 0;
+      z.polygon.forEach((pt) => {
+        sumLat += pt[0];
+        sumLon += pt[1];
+      });
+      centerLat = sumLat / z.polygon.length;
+      centerLon = sumLon / z.polygon.length;
+    }
+
+    this.updateBuoyPosition(centerLat, centerLon);
+    this.sendPositionImmediate(centerLat, centerLon);
+    if (this.map) {
+      this.map.panTo([centerLat, centerLon]);
+    }
   }
 
   updateQuickCoords(lat, lon) {
@@ -216,6 +350,29 @@ class RealLeafletMap {
       if (!res.ok) return;
       const data = await res.json();
 
+      // Ensure marker snaps to authoritative water coordinates (especially if dragged or clicked on land)
+      if (data.latitude !== undefined && data.longitude !== undefined) {
+        this.updateBuoyPosition(data.latitude, data.longitude);
+      }
+
+      // Highlight active zone
+      const zId = data.zone_id || (data.sim_zone && data.sim_zone.zone_id);
+      if (zId) {
+        this.highlightZone(zId);
+      }
+
+      // Update popup information
+      const popZone = document.getElementById("popup-buoy-zone");
+      if (popZone) {
+        popZone.innerText = data.zone_name || (data.sim_zone && data.sim_zone.name) || "Simulation Zone";
+      }
+      const popPh = document.getElementById("pop-ph");
+      const popEc = document.getElementById("pop-ec");
+      const popTurb = document.getElementById("pop-turb");
+      if (popPh && data.ph !== undefined) popPh.innerText = Number(data.ph).toFixed(2);
+      if (popEc && data.ec_us_cm !== undefined) popEc.innerText = Number(data.ec_us_cm).toFixed(1);
+      if (popTurb && data.turbidity_ntu !== undefined) popTurb.innerText = Number(data.turbidity_ntu).toFixed(2);
+
       // Synchronize with canvas visualizer if present
       if (window.lakeMapVisualizer && data.buoy_x !== undefined && data.buoy_y !== undefined) {
         window.lakeMapVisualizer.targetBuoyX = data.buoy_x;
@@ -227,6 +384,10 @@ class RealLeafletMap {
         }
         window.lakeMapVisualizer.zoneName = data.zone_name;
         window.lakeMapVisualizer.zoneId = data.zone_id;
+      }
+
+      if (typeof syncUI === "function") {
+        syncUI(data);
       }
 
       if (typeof pollStatus === "function") {
@@ -405,6 +566,7 @@ let realLeafletMap = null;
 function initLeafletDigitalTwin() {
   if (typeof L !== "undefined" && !realLeafletMap) {
     realLeafletMap = new RealLeafletMap("realLeafletMap");
+    window.realLeafletMap = realLeafletMap;
   }
 }
 
@@ -432,8 +594,13 @@ function switchMapMode(mode) {
 }
 
 function focusStationOnMap(lat, lon) {
-  switchMapMode("leaflet");
   if (realLeafletMap && realLeafletMap.map) {
     realLeafletMap.map.setView([lat, lon], 14, { animate: true });
+  }
+}
+
+function jumpToSimZone(zoneId) {
+  if (realLeafletMap) {
+    realLeafletMap.jumpToZone(zoneId);
   }
 }

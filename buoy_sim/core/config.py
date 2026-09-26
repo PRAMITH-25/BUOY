@@ -6,10 +6,10 @@ GATEWAY_DEVICE_ID = 0x0001
 LORA_SYNC_WORD = 0x34
 LORA_DEFAULT_FREQ_MHZ = 868.1
 
-# Lake location (Lake Geneva, WI / representative temperate freshwater lake)
-DEFAULT_LATITUDE = 42.5872
-DEFAULT_LONGITUDE = -88.4334
-MOORING_RADIUS_METERS = 5.0
+# Lake location (Lake Erie, Cleveland / Euclid Nearshore USGS Monitoring Station)
+DEFAULT_LATITUDE = 41.579629
+DEFAULT_LONGITUDE = -81.57919
+MOORING_RADIUS_METERS = 15.0
 
 # Base Lake Ground Truth
 BASE_LAKE_PARAMS = {

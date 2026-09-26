@@ -34,15 +34,9 @@ def map_xy_to_lat_lon(
     origin_lat: float = DEFAULT_LATITUDE,
     origin_lon: float = DEFAULT_LONGITUDE
 ) -> Tuple[float, float]:
-    """Convert local lake map coordinates (meters) to GPS Latitude/Longitude."""
-    dx_meters = x - origin_x
-    dy_meters = y - origin_y
-    meters_per_deg_lat = 111132.95
-    meters_per_deg_lon = 111412.84 * math.cos(math.radians(origin_lat))
-
-    lat = origin_lat + (dy_meters / meters_per_deg_lat)
-    lon = origin_lon + (dx_meters / meters_per_deg_lon)
-    return round(lat, 6), round(lon, 6)
+    """Convert local lake map coordinates (meters) to GPS Latitude/Longitude aligned with Lake Erie USGS dataset."""
+    from buoy_sim.data.usgs_loader import map_xy_to_usgs_latlon
+    return map_xy_to_usgs_latlon(x, y)
 
 
 def lat_lon_to_map_xy(
@@ -52,16 +46,9 @@ def lat_lon_to_map_xy(
     origin_lat: float = DEFAULT_LATITUDE,
     origin_lon: float = DEFAULT_LONGITUDE
 ) -> Tuple[float, float]:
-    """Convert GPS Latitude/Longitude back to local lake map coordinates (meters)."""
-    meters_per_deg_lat = 111132.95
-    meters_per_deg_lon = 111412.84 * math.cos(math.radians(origin_lat))
-
-    dy_meters = (lat - origin_lat) * meters_per_deg_lat
-    dx_meters = (lon - origin_lon) * meters_per_deg_lon
-
-    x = origin_x + dx_meters
-    y = origin_y + dy_meters
-    return round(x, 2), round(y, 2)
+    """Convert GPS Latitude/Longitude back to local lake map coordinates (meters) aligned with Lake Erie USGS dataset."""
+    from buoy_sim.data.usgs_loader import usgs_latlon_to_map_xy
+    return usgs_latlon_to_map_xy(lat, lon)
 
 
 class SpatialEnvironmentField:
@@ -271,3 +258,4 @@ class SpatialEnvironmentField:
             "flow_direction_deg": flow_dir_deg,
             "weights": weights,
         }
+
