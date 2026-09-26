@@ -14,7 +14,7 @@ from typing import Dict, Any, List
 from flask import Flask, render_template, jsonify, request, Response
 
 from buoy_sim.esp32.system import BuoySystem
-from buoy_sim.experiments.comparison import ComparisonExperiment
+from buoy_sim.experiments.comparison import ComparisonExperiment, DEFAULT_EXPERIMENT_PARAMS
 from buoy_sim.experiments.exporter import TelemetryExporter
 from buoy_sim.lora.packet import (
     CMD_TRIGGER_MEASUREMENT, CMD_CHANGE_INTERVAL, CMD_REQUEST_STATUS,
@@ -454,9 +454,22 @@ def security_test():
 @app.route("/api/experiment/run", methods=["POST"])
 def run_experiment():
     global latest_comparison, latest_comparison_logs
-    duration_s = float(request.json.get("duration_s", 1800.0)) if request.is_json else 1800.0
+    data = request.get_json(silent=True) or {}
+    duration_s = float(data.get("duration_s", 1800.0))
 
-    exp = ComparisonExperiment(duration_s=duration_s, step_s=2.0)
+    # Extract configurable chamber/experiment parameters from request
+    exp_params = {}
+    for key in DEFAULT_EXPERIMENT_PARAMS:
+        if key in data and data[key] is not None:
+            try:
+                val = data[key]
+                if key == "pump_energy_j_override" and val == "":
+                    val = None
+                exp_params[key] = float(val) if val is not None else None
+            except (ValueError, TypeError):
+                pass  # Use default if parsing fails
+
+    exp = ComparisonExperiment(duration_s=duration_s, step_s=2.0, params=exp_params if exp_params else None)
     summary = exp.run()
 
     with sim_lock:
@@ -464,6 +477,37 @@ def run_experiment():
         latest_comparison_logs = (exp.logs_a, exp.logs_b)
 
     return jsonify(summary)
+
+
+@app.route("/api/power", methods=["GET"])
+def get_power():
+    """Return compact power subsystem status for the dashboard power panel."""
+    with sim_lock:
+        snap = system.last_snapshot or system.step(0.1)
+        pwr = snap.get("power", {})
+        bat = pwr.get("battery", {})
+        return jsonify({
+            "solar_power_mw": pwr.get("solar_power_mw", 0.0),
+            "solar_irradiance_w_m2": pwr.get("solar_irradiance_w_m2", 0.0),
+            "load_power_mw": pwr.get("load_power_mw", 0.0),
+            "net_power_mw": pwr.get("net_power_mw", 0.0),
+            "soc_pct": bat.get("soc_pct", 0.0),
+            "voltage_v": bat.get("voltage_v", 0.0),
+            "remaining_wh": bat.get("remaining_wh", 0.0),
+            "estimated_endurance_days": pwr.get("estimated_endurance_days", 0.0),
+            "estimated_endurance_hours": pwr.get("estimated_endurance_hours", 0.0),
+            "power_mode": pwr.get("power_mode", "ACTIVE"),
+            "chamber_cycle_energy_mwh": pwr.get("chamber_cycle_energy_mwh", 0.0),
+            "currents_ma": pwr.get("currents_ma", {}),
+            "total_consumed_wh": pwr.get("total_consumed_wh", 0.0),
+            "total_harvested_wh": pwr.get("total_harvested_wh", 0.0),
+        })
+
+
+@app.route("/api/experiment/defaults", methods=["GET"])
+def get_experiment_defaults():
+    """Return default experiment parameters for the dashboard."""
+    return jsonify(DEFAULT_EXPERIMENT_PARAMS)
 
 @app.route("/api/export/telemetry.csv", methods=["GET"])
 def export_telemetry_csv():
