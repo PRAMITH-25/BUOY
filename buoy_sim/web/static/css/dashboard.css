@@ -1741,3 +1741,401 @@ body {
   font-size: 0.7rem;
   color: #334155;
 }
+
+/* ==========================================================================
+   GEOGRAPHIC DIGITAL TWIN & LEAFLET MAP STYLES
+   ========================================================================== */
+.map-mode-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 8px 14px;
+  background: var(--bg-card-alt);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.mode-switch-group {
+  display: flex;
+  gap: 6px;
+}
+
+.btn-mode {
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-mode:hover {
+  background: var(--bg-hover);
+}
+
+.btn-mode.active {
+  background: var(--accent-blue);
+  color: #ffffff;
+  border-color: var(--accent-blue);
+  box-shadow: 0 2px 6px rgba(2, 132, 199, 0.25);
+}
+
+.map-location-tag {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.pulse-dot-green {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.7);
+  animation: pulseGreen 2s infinite;
+}
+
+@keyframes pulseGreen {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(22, 163, 74, 0.7); }
+  70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(22, 163, 74, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(22, 163, 74, 0); }
+}
+
+.badge-geo-anchor {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  background: rgba(2, 132, 199, 0.1);
+  color: var(--accent-blue);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(2, 132, 199, 0.25);
+}
+
+.leaflet-map-wrapper {
+  position: relative;
+  width: 100%;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-sm);
+}
+
+.leaflet-overlay-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 14px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 0.75rem;
+}
+
+.overlay-stat {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.ov-lbl {
+  color: #94a3b8;
+  font-weight: 600;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.ov-val {
+  font-weight: 700;
+}
+
+/* Leaflet Custom Marker Icons */
+.leaflet-buoy-icon-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.buoy-radar-ping {
+  position: absolute;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(56, 189, 248, 0.45);
+  animation: buoyPing 1.8s ease-out infinite;
+}
+
+@keyframes buoyPing {
+  0% { transform: scale(0.3); opacity: 1; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+.buoy-marker-pin {
+  cursor: grab;
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.35));
+  z-index: 10;
+  transition: transform 0.15s ease;
+}
+
+.buoy-marker-pin:hover {
+  transform: scale(1.15);
+}
+
+.leaflet-station-icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.station-marker-pin {
+  cursor: pointer;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.25));
+}
+
+.station-marker-pin:hover {
+  transform: scale(1.18);
+}
+
+/* Popups */
+.leaflet-buoy-popup,
+.leaflet-station-popup {
+  font-family: var(--font-sans);
+  min-width: 210px;
+}
+
+.leaflet-buoy-popup h4,
+.leaflet-station-popup h4 {
+  margin: 4px 0 6px 0;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.popup-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.03em;
+}
+
+.badge-real {
+  background: rgba(22, 163, 74, 0.12);
+  color: #15803d;
+  border: 1px solid rgba(22, 163, 74, 0.25);
+}
+
+.badge-cached {
+  background: rgba(217, 119, 6, 0.12);
+  color: #b45309;
+  border: 1px solid rgba(217, 119, 6, 0.25);
+}
+
+.popup-meta,
+.station-meta {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.popup-note {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-color);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.station-params-block {
+  margin-top: 6px;
+}
+
+.params-tags-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.station-param-tag {
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 0.68rem;
+  color: #334155;
+}
+
+.btn-usgs-link {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 4px 10px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #0284c7;
+  background: #e0f2fe;
+  border-radius: 4px;
+  text-decoration: none;
+  transition: background 0.15s ease;
+}
+
+.btn-usgs-link:hover {
+  background: #bae6fd;
+}
+
+/* Environmental Twin Grid */
+.env-twin-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+@media (max-width: 900px) {
+  .env-twin-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.env-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: var(--shadow-sm);
+}
+
+.env-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.env-card-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.weather-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+@media (max-width: 600px) {
+  .weather-metrics-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+.wm-box {
+  background: var(--bg-card-alt);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px 6px;
+  text-align: center;
+}
+
+.wm-lbl {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 600;
+  display: block;
+}
+
+.wm-val {
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  margin-top: 3px;
+  display: block;
+}
+
+.env-disclaimer {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  font-style: italic;
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 6px;
+}
+
+.nearby-stations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 130px;
+  overflow-y: auto;
+}
+
+.station-card-compact {
+  padding: 6px 10px;
+  background: var(--bg-card-alt);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.station-card-compact:hover {
+  background: #f0fdf4;
+  border-color: #86efac;
+}
+
+.st-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.st-id-tag {
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--accent-green);
+}
+
+.st-dist-tag {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.st-name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.st-meta {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}

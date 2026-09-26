@@ -9,7 +9,9 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/dashboard.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 </head>
 <body>
 
@@ -125,29 +127,63 @@
       <div class="card-header-bar">
         <div class="card-title-block">
           <span class="card-section-num">Section 1</span>
-          <h2 class="card-title">Interactive Water Body &amp; USGS Spatial Heatmap</h2>
-          <span class="card-subtitle">Drag the buoy marker to sample position-dependent water quality derived from actual USGS observations via KNN-IDW (K=3)</span>
+          <h2 class="card-title">Interactive Water Body &amp; USGS Spatial Heatmap (Geographic Digital Twin)</h2>
+          <span class="card-subtitle">Real-world anchored Lake Erie monitoring twin with Leaflet GIS mapping, Open-Meteo live weather, and USGS streamgage integration.</span>
         </div>
         <div class="badge-row-inline">
+          <span class="card-status-badge badge-real">OPEN-METEO LIVE WEATHER</span>
           <span class="card-status-badge badge-usgs">USGS HISTORICAL DATA</span>
           <button class="btn-link-sm" onclick="toggleCollapsible('source-details')">View Source Details ▼</button>
         </div>
       </div>
 
       <div class="card-body">
+        <!-- Map Mode & Location Toolbar -->
+        <div class="map-mode-toolbar">
+          <div class="mode-switch-group">
+            <button class="btn-mode active" id="btn-mode-leaflet" onclick="switchMapMode('leaflet')">🗺 Geographic Map (Leaflet)</button>
+            <button class="btn-mode" id="btn-mode-heatmap" onclick="switchMapMode('heatmap')">🌊 USGS Hydrodynamic Heatmap (Canvas)</button>
+          </div>
+          <div class="map-location-tag">
+            <span class="pulse-dot-green"></span>
+            <span id="map-waterbody-name">Lake Erie (Cleveland / Euclid Nearshore, OH)</span>
+            <span class="badge-geo-anchor">41.580°N, -81.579°W</span>
+          </div>
+        </div>
+
         <div class="lake-map-layout">
-          <!-- Map Canvas -->
+          <!-- Map Column (Leaflet + Canvas) -->
           <div class="map-view-column">
-            <div class="canvas-wrapper">
-              <canvas id="lakeMapCanvas" width="920" height="420"></canvas>
-              <div class="canvas-hint">
-                <span>📍 <strong>Drag buoy marker</strong> to sample spatial coordinates</span>
-                <span class="font-mono" id="map-quick-coords">X: 500m | Y: 300m</span>
+            <!-- 1. Real Leaflet GIS Map Container -->
+            <div id="leafletMapWrapper" class="leaflet-map-wrapper">
+              <div id="realLeafletMap" style="width: 100%; height: 420px; border-radius: 8px; z-index: 1;"></div>
+              <div class="leaflet-overlay-bar">
+                <div class="overlay-stat">
+                  <span class="ov-lbl">DEMO SITE</span>
+                  <span class="ov-val">Lake Erie Nearshore</span>
+                </div>
+                <div class="overlay-stat">
+                  <span class="ov-lbl">GPS COORDINATES</span>
+                  <span class="ov-val text-blue font-mono" id="map-quick-coords">Lat: 41.57963° | Lon: -81.57919°</span>
+                </div>
+                <div class="overlay-stat">
+                  <span class="ov-lbl">LAYERS</span>
+                  <span class="ov-val text-green">Streets · Satellite · USGS Stations</span>
+                </div>
               </div>
             </div>
 
-            <!-- Heatmap Parameter Controls -->
-            <div class="heatmap-controls-row">
+            <!-- 2. USGS Hydrodynamic Heatmap Canvas (Togglable) -->
+            <div id="canvasMapWrapper" class="canvas-wrapper" style="display: none;">
+              <canvas id="lakeMapCanvas" width="920" height="420"></canvas>
+              <div class="canvas-hint">
+                <span>📍 <strong>Drag buoy marker</strong> to sample spatial coordinates</span>
+                <span class="font-mono" id="canvas-quick-coords">X: 500m | Y: 300m</span>
+              </div>
+            </div>
+
+            <!-- Heatmap Parameter Controls (Shown when Heatmap mode active) -->
+            <div class="heatmap-controls-row" id="heatmapControlsRow" style="display: none;">
               <div class="param-btn-group">
                 <span class="param-btn-label">Heatmap:</span>
                 <button class="btn-param active" id="btn-param-turbidity" onclick="setHeatmapParameter('turbidity_ntu')">Turbidity (NTU)</button>
@@ -208,6 +244,58 @@
             <div class="source-attribution">
               Data Source: <strong>USGS Lake Erie Nearshore Sonde Dataset — June 2019</strong><br>
               <span class="text-muted" style="font-size:0.7rem;">KNN-IDW spatial interpolation (K=3 nearest USGS observations)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Environmental Digital Twin Row (Real Weather + USGS Station Network) -->
+        <div class="env-twin-grid">
+          <!-- Live Weather Card -->
+          <div class="env-card">
+            <div class="env-card-header">
+              <div class="env-card-title">
+                <span class="env-icon">🌤</span>
+                <span>Real-Time Environmental Conditions</span>
+              </div>
+              <span id="weather-status-badge" class="card-status-badge badge-real">REAL WEATHER · OPEN-METEO</span>
+            </div>
+            <div class="weather-metrics-grid">
+              <div class="wm-box">
+                <span class="wm-lbl">Air Temp</span>
+                <span class="wm-val" id="weather-air-temp">-- °C</span>
+              </div>
+              <div class="wm-box">
+                <span class="wm-lbl">Wind (Speed/Dir)</span>
+                <span class="wm-val" id="weather-wind-speed">-- m/s</span>
+              </div>
+              <div class="wm-box">
+                <span class="wm-lbl">Precipitation</span>
+                <span class="wm-val" id="weather-precipitation">0.0 mm</span>
+              </div>
+              <div class="wm-box">
+                <span class="wm-lbl">Solar Irradiance</span>
+                <span class="wm-val text-amber" id="weather-solar-irrad">-- W/m²</span>
+              </div>
+            </div>
+            <div class="env-disclaimer" id="weather-disclaimer-note">
+              Real atmospheric conditions driving virtual solar panel &amp; water thermal equilibrium.
+            </div>
+          </div>
+
+          <!-- Nearby Real USGS Monitoring Stations Card -->
+          <div class="env-card">
+            <div class="env-card-header">
+              <div class="env-card-title">
+                <span class="env-icon">🏛</span>
+                <span>Nearby USGS Monitoring Stations (Lake Erie Basin)</span>
+              </div>
+              <span class="card-status-badge badge-real">REAL USGS METADATA</span>
+            </div>
+            <div class="nearby-stations-list" id="nearby-stations-list">
+              <div class="text-muted" style="font-size:0.8rem;padding:8px;">Loading nearby streamgages...</div>
+            </div>
+            <div class="env-disclaimer">
+              Click any station card to focus the map and inspect verified streamgage water parameters.
             </div>
           </div>
         </div>
@@ -1030,6 +1118,7 @@
   <!-- Scripts -->
   <script src="/static/js/chamber_anim.js"></script>
   <script src="/static/js/lake_map.js"></script>
+  <script src="/static/js/leaflet_map.js"></script>
   <script src="/static/js/dashboard.js"></script>
 </body>
 </html>

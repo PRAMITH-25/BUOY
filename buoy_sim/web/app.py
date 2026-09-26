@@ -20,6 +20,9 @@ from buoy_sim.lora.packet import (
     CMD_TRIGGER_MEASUREMENT, CMD_CHANGE_INTERVAL, CMD_REQUEST_STATUS,
     CMD_INITIATE_CHAMBER, CMD_LOW_POWER_MODE
 )
+from buoy_sim.core.location import get_location_config, set_location_config, get_nearby_stations
+from buoy_sim.data.weather_client import get_weather_client
+from buoy_sim.data.usgs_api_client import get_usgs_api_client
 
 app = Flask(__name__)
 
@@ -40,11 +43,12 @@ history_points: List[Dict[str, Any]] = []
 replay_active = False
 replay_index = 0
 replay_last_tick = time.time()
+weather_last_sync = 0.0
 lora_exchange_log: List[Dict[str, Any]] = []
 
 def background_sim_loop():
     """Background simulation thread running time steps."""
-    global is_running, speed_multiplier, history_points, replay_active, replay_index, replay_last_tick
+    global is_running, speed_multiplier, history_points, replay_active, replay_index, replay_last_tick, weather_last_sync
     last_wall_time = time.time()
 
     while True:
@@ -53,6 +57,18 @@ def background_sim_loop():
         last_wall_time = now
 
         if is_running:
+            # Sync real Open-Meteo weather every 5 minutes (cached with 10m TTL)
+            if now - weather_last_sync >= 300.0:
+                weather_last_sync = now
+                try:
+                    w_client = get_weather_client()
+                    with sim_lock:
+                        lat, lon = system.gps.latitude, system.gps.longitude
+                    w_data = w_client.get_weather(lat, lon)
+                    with sim_lock:
+                        system.env.apply_weather_data(w_data)
+                except Exception:
+                    pass
             # Advance USGS Historical Data Replay if active
             if replay_active and (now - replay_last_tick >= max(0.4, 2.0 / max(0.5, speed_multiplier * 0.4))):
                 replay_last_tick = now
@@ -158,6 +174,29 @@ def get_status():
             "total_records": len(loader.valid_records) if (loader and loader.valid_records) else 0,
         }
         snap["lora_exchange"] = list(lora_exchange_log)[-20:]
+
+        # Real Location & Weather Integration
+        loc = get_location_config()
+        snap["location"] = {
+            "water_body_name": loc.get("water_body_name"),
+            "region": loc.get("region"),
+            "latitude": system.gps.latitude,
+            "longitude": system.gps.longitude,
+        }
+        w_client = get_weather_client()
+        w_data = w_client._cache or {}
+        snap["weather_summary"] = {
+            "air_temperature_c": w_data.get("air_temperature_c"),
+            "precipitation_mm": w_data.get("precipitation_mm", 0.0),
+            "rain_mm": w_data.get("rain_mm", 0.0),
+            "wind_speed_m_s": w_data.get("wind_speed_m_s"),
+            "wind_direction_deg": w_data.get("wind_direction_deg"),
+            "cloud_cover_pct": w_data.get("cloud_cover_pct"),
+            "shortwave_radiation_w_m2": w_data.get("shortwave_radiation_w_m2"),
+            "status": w_data.get("status", "REAL_API_DATA" if w_data else "OFFLINE_FALLBACK"),
+            "source": w_data.get("source", "Open-Meteo Weather API"),
+            "observation_time": w_data.get("observation_time"),
+        }
         return jsonify(snap)
 
 @app.route("/api/usgs/info", methods=["GET"])
@@ -220,16 +259,19 @@ def set_weather():
         return jsonify({"weather": system.env.weather, "rain_intensity": system.env.rain_intensity})
 
 @app.route("/api/control/buoy_position", methods=["POST"])
+@app.route("/api/buoy/position", methods=["POST"])
 def set_buoy_position():
     with sim_lock:
-        if request.is_json:
-            x = float(request.json.get("x", 500.0))
-            y = float(request.json.get("y", 300.0))
+        data = request.get_json(silent=True) or request.form or {}
+        if "latitude" in data and "longitude" in data:
+            lat = float(data["latitude"])
+            lon = float(data["longitude"])
+            pos_info = system.set_buoy_lat_lon(lat, lon)
         else:
-            x = float(request.form.get("x", 500.0))
-            y = float(request.form.get("y", 300.0))
+            x = float(data.get("x", 500.0))
+            y = float(data.get("y", 300.0))
+            pos_info = system.set_buoy_position(x, y)
 
-        pos_info = system.set_buoy_position(x, y)
         snap = system.step(0.0)
         # Query USGS data for the new buoy position
         usgs_data = system.env.get_usgs_conditions(system.buoy_x, system.buoy_y)
@@ -508,6 +550,124 @@ def get_power():
 def get_experiment_defaults():
     """Return default experiment parameters for the dashboard."""
     return jsonify(DEFAULT_EXPERIMENT_PARAMS)
+
+
+@app.route("/api/map", methods=["GET"])
+def get_map():
+    """Return map configuration, bounding coordinates, and current buoy GPS coordinates."""
+    loc = get_location_config()
+    with sim_lock:
+        return jsonify({
+            "water_body_name": loc["water_body_name"],
+            "region": loc["region"],
+            "center": {
+                "latitude": loc["latitude"],
+                "longitude": loc["longitude"],
+            },
+            "buoy": {
+                "latitude": system.gps.latitude,
+                "longitude": system.gps.longitude,
+                "buoy_x": system.buoy_x,
+                "buoy_y": system.buoy_y,
+            },
+            "zoom": loc["zoom"],
+            "bounds": loc["bounds"],
+            "tile_provider": {
+                "url": "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+                "attribution": "&copy; <a href=\"https://www.openstreetmap.org/copyright\">OpenStreetMap</a> contributors",
+                "max_zoom": 19,
+            },
+            "status": "REAL_MAP_ACTIVE",
+            "nearby_stations_count": len(get_nearby_stations()),
+        })
+
+
+@app.route("/api/environment", methods=["GET"])
+def get_environment():
+    """Return unified environmental conditions (weather, spatial zone, water baseline)."""
+    loc = get_location_config()
+    w_client = get_weather_client()
+    with sim_lock:
+        lat = system.gps.latitude
+        lon = system.gps.longitude
+        w_data = w_client.get_weather(lat, lon)
+        usgs_cond = system.env.get_usgs_conditions(system.buoy_x, system.buoy_y)
+        return jsonify({
+            "location": loc,
+            "buoy_position": {
+                "latitude": lat,
+                "longitude": lon,
+                "buoy_x": system.buoy_x,
+                "buoy_y": system.buoy_y,
+                "zone_id": system.env.current_zone_id,
+                "zone_name": system.env.get_current_zone_name(),
+                "flow_speed_m_s": getattr(system.env.spatial_field, 'base_flow_speed', 0.0),
+            },
+            "weather": w_data,
+            "water_baseline": {
+                "ph": usgs_cond.get("ph"),
+                "ec_us_cm": usgs_cond.get("ec_us_cm"),
+                "turbidity_ntu": usgs_cond.get("turbidity_ntu"),
+                "water_temp_c": usgs_cond.get("water_temp_c"),
+                "data_source": usgs_cond.get("data_source_label", "USGS HISTORICAL DATA"),
+                "timestamp": usgs_cond.get("nearest_record_timestamp"),
+            },
+            "simulation_note": "Weather and water baseline are external environmental inputs driving virtual buoy sensors.",
+        })
+
+
+@app.route("/api/weather", methods=["GET"])
+def get_weather():
+    """Return live weather from Open-Meteo API (or cached/fallback)."""
+    force = request.args.get("refresh", "false").lower() == "true"
+    with sim_lock:
+        lat = system.gps.latitude
+        lon = system.gps.longitude
+    w_client = get_weather_client()
+    weather = w_client.get_weather(lat, lon, force_refresh=force)
+    with sim_lock:
+        system.env.apply_weather_data(weather)
+    return jsonify(weather)
+
+
+@app.route("/api/water-data", methods=["GET"])
+def get_water_data():
+    """Return USGS Water Services API real-time observation data (or cached/fallback)."""
+    force = request.args.get("refresh", "false").lower() == "true"
+    with sim_lock:
+        lat = system.gps.latitude
+        lon = system.gps.longitude
+    api_client = get_usgs_api_client()
+    data = api_client.get_water_data(force_refresh=force, buoy_lat=lat, buoy_lon=lon)
+    return jsonify(data)
+
+
+@app.route("/api/stations", methods=["GET"])
+def get_stations():
+    """Return nearby water-quality monitoring stations with coordinates and available parameters."""
+    stations = get_nearby_stations()
+    return jsonify({
+        "count": len(stations),
+        "stations": stations,
+        "demonstration_site": get_location_config()["water_body_name"],
+        "source": "USGS National Water Information System",
+    })
+
+
+@app.route("/api/location/config", methods=["GET", "POST"])
+def location_config():
+    """Get or update demonstration location."""
+    if request.method == "POST":
+        data = request.get_json(silent=True) or request.form or {}
+        lat = float(data.get("latitude", 41.57963))
+        lon = float(data.get("longitude", -81.57919))
+        name = data.get("water_body_name")
+        updated = set_location_config(lat, lon, name)
+        with sim_lock:
+            system.set_buoy_lat_lon(lat, lon)
+        return jsonify({"status": "LOCATION_UPDATED", "config": updated})
+    return jsonify(get_location_config())
+
 
 @app.route("/api/export/telemetry.csv", methods=["GET"])
 def export_telemetry_csv():

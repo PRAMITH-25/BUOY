@@ -448,6 +448,10 @@ class LakeMapVisualizer {
       this.currentLat = data.latitude;
       this.currentLon = data.longitude;
 
+      if (window.realLeafletMap && data.latitude !== undefined && data.longitude !== undefined) {
+        window.realLeafletMap.updateBuoyPosition(data.latitude, data.longitude);
+      }
+
       if (data.usgs_data) {
         this.localUsgs = data.usgs_data;
       }

@@ -89,6 +89,23 @@ class BuoySystem:
             "zone_id": self.env.current_zone_id,
         }
 
+    def set_buoy_lat_lon(self, lat: float, lon: float) -> Dict[str, Any]:
+        """Update buoy position from real geographic GPS coordinates."""
+        from buoy_sim.data.usgs_loader import usgs_latlon_to_map_xy
+        x, y = usgs_latlon_to_map_xy(lat, lon)
+        cx, cy = self.env.set_buoy_position(x, y)
+        self.buoy_x = cx
+        self.buoy_y = cy
+        self.gps.set_anchor(lat, lon)
+        return {
+            "buoy_x": self.buoy_x,
+            "buoy_y": self.buoy_y,
+            "latitude": lat,
+            "longitude": lon,
+            "zone_name": self.env.get_current_zone_name(),
+            "zone_id": self.env.current_zone_id,
+        }
+
     def step(self, dt_s: float = 1.0) -> Dict[str, Any]:
         """
         Execute one discrete simulation step of length dt_s seconds.

@@ -53,6 +53,11 @@ class LakeEnvironment:
         self._init_usgs()
         self._last_usgs_result: Dict[str, Any] = {}
 
+        # Real online weather & water data inputs
+        self.real_weather_data: Optional[Dict[str, Any]] = None
+        self.real_water_data: Optional[Dict[str, Any]] = None
+        self.real_solar_irradiance: Optional[float] = None
+
     def _init_usgs(self) -> None:
         """Load the USGS dataset once; store error string on failure (never crashes)."""
         try:
@@ -158,11 +163,14 @@ class LakeEnvironment:
 
         hour_of_day = (sim_time_s / 3600.0) % 24.0
 
-        # 1. Diurnal solar elevation & irradiance (synthetic, unchanged)
-        solar_angle = math.sin(math.pi * (hour_of_day - 6.0) / 12.0) if 6.0 <= hour_of_day <= 18.0 else 0.0
-        base_irradiance_w_m2 = max(0.0, 1000.0 * solar_angle)
-        attenuation = (1.0 - 0.75 * self.cloud_cover) * (1.0 - 0.5 * self.rain_intensity)
-        solar_irradiance_w_m2 = base_irradiance_w_m2 * attenuation
+        # 1. Solar irradiance (uses real shortwave radiation if available, otherwise diurnal calculation)
+        if self.real_solar_irradiance is not None and self.real_solar_irradiance > 0.0:
+            solar_irradiance_w_m2 = round(self.real_solar_irradiance, 1)
+        else:
+            solar_angle = math.sin(math.pi * (hour_of_day - 6.0) / 12.0) if 6.0 <= hour_of_day <= 18.0 else 0.0
+            base_irradiance_w_m2 = max(0.0, 1000.0 * solar_angle)
+            attenuation = (1.0 - 0.75 * self.cloud_cover) * (1.0 - 0.5 * self.rain_intensity)
+            solar_irradiance_w_m2 = base_irradiance_w_m2 * attenuation
 
         # 2. Weather effect deltas
         rain_cooling = -1.5 * self.rain_intensity
@@ -220,6 +228,7 @@ class LakeEnvironment:
             "usgs_longitude":        usgs["longitude"],
             "data_source_label":     "USGS HISTORICAL DATA",
             "usgs":                  usgs,
+            "real_weather":          self.real_weather_data,
             # --- Synthetic / hardware model fields (unchanged) ---
             "wave_height_m":         effective_wave_height,
             "wave_period_s":         wave_period_s,
@@ -235,6 +244,29 @@ class LakeEnvironment:
             "weights":               spatial_res["weights"],
         }
 
+    def apply_weather_data(self, w: Dict[str, Any]) -> None:
+        """Apply real Open-Meteo weather parameters to the digital twin simulation."""
+        self.real_weather_data = dict(w)
+        # Precipitation / Rain drives simulated runoff intensity
+        precip = max(float(w.get("precipitation_mm", 0.0)), float(w.get("rain_mm", 0.0)))
+        if precip > 0.05:
+            # Scaled so that 5 mm/h = 1.0 (heavy rain runoff)
+            self.rain_intensity = min(1.0, max(0.05, precip / 5.0))
+            self.weather = WeatherState.RAIN_RUNOFF
+        else:
+            self.rain_intensity = 0.0
+            self.weather = WeatherState.CLEAR
+
+        if "cloud_cover_pct" in w:
+            self.cloud_cover = min(1.0, max(0.0, float(w["cloud_cover_pct"]) / 100.0))
+
+        if "wind_speed_m_s" in w:
+            self.wind_speed_m_s = max(0.5, float(w["wind_speed_m_s"]))
+            self.wave_height_m = max(0.05, min(1.2, 0.08 + 0.035 * self.wind_speed_m_s))
+
+        if "shortwave_radiation_w_m2" in w and w["shortwave_radiation_w_m2"] is not None:
+            self.real_solar_irradiance = float(w["shortwave_radiation_w_m2"])
+
     def trigger_rain_runoff(self, intensity: float = 0.85):
         """Trigger simulated storm rain runoff event."""
         self.weather = WeatherState.RAIN_RUNOFF
@@ -248,3 +280,5 @@ class LakeEnvironment:
         self.rain_intensity = 0.0
         self.cloud_cover = 0.15
         self.wind_speed_m_s = 2.5
+        self.real_solar_irradiance = None
+

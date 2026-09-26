@@ -35,6 +35,11 @@ document.addEventListener("DOMContentLoaded", () => {
     lakeMapVisualizer = new LakeMapVisualizer("lakeMapCanvas");
   }
 
+  // Initialize Leaflet Digital Twin Map
+  if (typeof initLeafletDigitalTwin === "function") {
+    initLeafletDigitalTwin();
+  }
+
   // Initialize time-series chart (even if collapsed)
   initTimeSeriesChart();
 
@@ -107,9 +112,18 @@ function syncUI(data) {
     }
   }
 
-  // ---- Section 1: Map Quick Coords ----
+  // ---- Section 1: Map Quick Coords & Leaflet Position Sync ----
+  const gpsLat = data.gps ? data.gps.latitude : (usgs.latitude !== undefined ? usgs.latitude : 41.57963);
+  const gpsLon = data.gps ? data.gps.longitude : (usgs.longitude !== undefined ? usgs.longitude : -81.57919);
+
   if (gt.buoy_x !== undefined && gt.buoy_y !== undefined) {
-    setText("map-quick-coords", `X: ${Math.round(gt.buoy_x)}m | Y: ${Math.round(gt.buoy_y)}m`);
+    setText("canvas-quick-coords", `X: ${Math.round(gt.buoy_x)}m | Y: ${Math.round(gt.buoy_y)}m`);
+  }
+  if (gpsLat !== undefined && gpsLon !== undefined) {
+    setText("map-quick-coords", `Lat: ${gpsLat.toFixed(5)}° | Lon: ${gpsLon.toFixed(5)}°`);
+    if (window.realLeafletMap) {
+      window.realLeafletMap.updateBuoyPosition(gpsLat, gpsLon);
+    }
   }
 
   // ---- Source Observations (collapsible KNN-IDW detail) ----

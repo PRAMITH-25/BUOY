@@ -23,6 +23,14 @@ class NEO6MGps:
         self.course_deg = 45.0
         self.fault_lock_lost = False
 
+    @property
+    def latitude(self) -> float:
+        return self.current_lat
+
+    @property
+    def longitude(self) -> float:
+        return self.current_lon
+
     def set_anchor(self, lat: float, lon: float):
         """Set the anchor coordinates corresponding to buoy map position."""
         self.anchor_lat = float(lat)
